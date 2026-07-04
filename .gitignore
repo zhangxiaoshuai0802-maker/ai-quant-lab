@@ -9,11 +9,13 @@ build/
 # Jupyter
 .ipynb_checkpoints/
 
-# 数据文件（量大，不提交）
+# 数据文件（量大，不提交；小样本数据可提交）
 data-pipeline/data/
-task02-indicator-lab/data/
-task02-indicator-lab/figures/
 outputs/stock_data/
+
+# task02 生成结果（按需提交小文件，忽略大文件）
+task02-indicator-lab/figures/
+task02-indicator-lab/data/
 
 # 日志
 *.log
