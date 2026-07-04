@@ -1,0 +1,513 @@
+# =============================================================================
+# Task02: 技术指标计算实验室 — 中芯国际(港股) Notebook
+# Spec Version: 1.0.0
+# Date: 2026-07-04
+# =============================================================================
+
+spec:
+  name: task02-indicator-lab
+  version: 1.0.0
+  description: >
+    使用 Tushare 获取中芯国际港股(00981.HK)日线行情，
+    在 Jupyter Notebook 中逐步计算 RSI、MACD、布林带、ATR 四项技术指标，
+    以图文并茂的方式展现完整计算过程与结果判读。
+
+# -----------------------------------------------------------------------------
+# 1. 标的定义
+# -----------------------------------------------------------------------------
+target:
+  name: 中芯国际
+  hk_code: "00981.HK"          # 港股代码
+  a_code: "688981.SH"          # A股代码(备用)
+  exchange: HKEX               # 香港交易所
+  industry: 半导体
+  note: >
+    港股中芯国际与A股中芯国际为同一公司不同市场上市。
+    港股交易时间 09:30-16:00 (HKT)，无涨跌停限制，
+    受美股半导体板块与地缘政策影响显著，常出现跳空缺口。
+
+# -----------------------------------------------------------------------------
+# 2. 数据获取
+# -----------------------------------------------------------------------------
+data_source:
+  primary:
+    api: hk_daily              # Tushare 港股日线接口
+    params:
+      ts_code: "00981.HK"
+      start_date: "20230101"   # 回溯 2.5 年，足以计算各指标并观察趋势
+      end_date: "{today}"      # 运行时替换为当日
+    fields: [ts_code, trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount]
+    permission: 需一定积分(当前token待验证)
+    rate_limit: 320次/分钟(参考值)
+
+  adjusted:
+    api: pro_bar               # 复权数据(若需前复权)
+    params:
+      ts_code: "00981.HK"
+      adj: qfq                 # 前复权
+      freq: daily
+    note: >
+      港股同样存在分红派息导致的除权缺口。
+      技术指标计算应使用前复权数据，避免除权日产生虚假信号。
+      pro_bar 内部调用 adj_factor，当前 token 的 adj_factor 限频可能为 1次/小时。
+
+  fallback:
+    condition: hk_daily 无权限或返回空
+    action: >
+      降级使用 A 股数据 688981.SH(科创板上证)，
+      通过 pro.daily() 或 pro_bar(adj='qfq') 获取。
+      在 notebook 中标注数据源切换说明。
+
+  quality_checks:
+    - row_count: 数据行数 > 200 (确保足够计算各指标)
+    - no_duplicate: (ts_code, trade_date) 唯一
+    - price_sanity: open/high/low/close > 0, high >= low, high >= close >= low
+    - null_check: open/high/low/close/vol 无空值
+    - date_sort: 按 trade_date 升序排列
+
+# -----------------------------------------------------------------------------
+# 3. 依赖环境
+# -----------------------------------------------------------------------------
+dependencies:
+  python: ">=3.10"
+  packages:
+    - name: tushare
+      version: ">=1.4.0"
+      purpose: 数据获取
+    - name: pandas
+      version: ">=2.0"
+      purpose: 数据处理与指标计算
+    - name: matplotlib
+      version: ">=3.7"
+      purpose: 图表可视化
+    - name: notebook
+      version: ">=7.0"
+      purpose: Jupyter Notebook 运行环境
+  env:
+    TUSHARE_TOKEN: "必需，从环境变量读取"
+
+# -----------------------------------------------------------------------------
+# 4. 指标定义与参数
+# -----------------------------------------------------------------------------
+indicators:
+
+  # --- RSI ---
+  - id: rsi
+    name: 相对强弱指数
+    full_name: Relative Strength Index
+    type: 动量震荡指标
+    params:
+      period: 14                # 计算窗口(默认14日)
+    formula:
+      step1: "计算每日价格变化 ΔP = Close_t − Close_{t-1}"
+      step2: "分离涨幅 gain = max(ΔP, 0) 与跌幅 loss = max(−ΔP, 0)"
+      step3: "计算 N 日平均涨幅 avg_gain 与平均跌幅 avg_loss (Wilder 平滑法)"
+      step4: "RS = avg_gain / avg_loss"
+      step5: "RSI = 100 − 100 / (1 + RS)"
+    output_fields: [rsi_14]
+    value_range: "0 ~ 100"
+    signals:
+      overbought: "> 70 (超买，可能回调)"
+      oversold: "< 30 (超卖，可能反弹)"
+      neutral: "30 ~ 70 (中性区间)"
+    visualization:
+      type: 折线图
+      y_range: [0, 100]
+      reference_lines: [30, 70]
+      fill_zones: true          # 填充超买/超卖区域
+
+  # --- MACD ---
+  - id: macd
+    name: 指数平滑异同移动平均线
+    full_name: Moving Average Convergence Divergence
+    type: 趋势跟踪指标
+    params:
+      fast: 12                  # 快线 EMA 周期
+      slow: 26                  # 慢线 EMA 周期
+      signal: 9                 # 信号线 EMA 周期
+    formula:
+      step1: "计算 12 日 EMA (快线)"
+      step2: "计算 26 日 EMA (慢线)"
+      step3: "DIF = EMA(12) − EMA(26)"
+      step4: "DEA = EMA(9) of DIF (信号线)"
+      step5: "MACD 柱 = (DIF − DEA) × 2"
+    output_fields: [dif, dea, macd_hist]
+    signals:
+      golden_cross: "DIF 上穿 DEA → 买入信号"
+      death_cross: "DIF 下穿 DEA → 卖出信号"
+      histogram_expansion: "柱状图放大 → 动能增强"
+      histogram_shrink: "柱状图缩短 → 动能衰减"
+    visualization:
+      type: 双面板
+      panel_1: 价格折线图
+      panel_2: DIF/DEA 折线 + MACD 柱状图 (红涨绿跌)
+      cross_markers: true       # 标注金叉/死叉点
+
+  # --- 布林带 ---
+  - id: bollinger
+    name: 布林带
+    full_name: Bollinger Bands
+    type: 波动率通道指标
+    params:
+      window: 20                # 移动平均窗口
+      num_std: 2                # 标准差倍数
+    formula:
+      step1: "中轨 = SMA(Close, 20)"
+      step2: "σ = Std(Close, 20)"
+      step3: "上轨 = 中轨 + 2σ"
+      step4: "下轨 = 中轨 − 2σ"
+      step5: "带宽 = (上轨 − 下轨) / 中轨"
+      step6: "%B = (Close − 下轨) / (上轨 − 下轨)"
+    output_fields: [bb_mid, bb_upper, bb_lower, bb_width, bb_pct_b]
+    signals:
+      squeeze: "带宽收窄至历史低位 → 波动率压缩，即将突破"
+      expansion: "带宽放大 → 波动率扩张，趋势加速"
+      touch_upper: "价格触及/突破上轨 → 短期偏强"
+      touch_lower: "价格触及/跌破下轨 → 短期偏弱"
+    visualization:
+      type: 折线图 + 填充带
+      layers: [close, bb_upper, bb_mid, bb_lower]
+      fill_between: [bb_upper, bb_lower]  # 上下轨之间半透明填充
+      bandwidth_panel: true     # 第二面板显示带宽
+
+  # --- ATR ---
+  - id: atr
+    name: 平均真实波幅
+    full_name: Average True Range
+    type: 波动率度量指标
+    params:
+      period: 14                # 计算窗口(默认14日)
+    formula:
+      step1: "TR = max(High−Low, |High−PrevClose|, |Low−PrevClose|)"
+      step2: "ATR = SMA(TR, 14) 或 Wilder 平滑法"
+    output_fields: [tr, atr_14]
+    note: "ATR 不指示方向，只衡量波动幅度"
+    signals:
+      spike: "ATR 飙升 → 波动加剧，可能趋势转折"
+      low: "ATR 低迷 → 市场平静，盘整蓄势"
+      stop_loss: "止损价 = 入场价 − 2×ATR (多头)"
+      position: "仓位 = 风险金额 / (ATR × 倍数)"
+    visualization:
+      type: 双面板
+      panel_1: 价格折线 + ATR 倍数止损线
+      panel_2: ATR 折线图 + 成交量参考
+
+# -----------------------------------------------------------------------------
+# 5. Notebook 结构 (cell 级规划)
+# -----------------------------------------------------------------------------
+notebook_structure:
+
+  - cell_index: 1
+    type: markdown
+    title: 标题与概述
+    content: |
+      # 中芯国际(港股)技术指标计算实验室
+      ## Task02 — RSI / MACD / 布林带 / ATR
+      ### 标的: 00981.HK | 数据源: Tushare | 日期: 2026-07-04
+      简述本 notebook 的目标：获取中芯国际港股日线数据，
+      逐步计算四项经典技术指标，展示计算过程与可视化判读。
+
+  - cell_index: 2
+    type: code
+    title: 环境初始化
+    content: |
+      导入 tushare / pandas / matplotlib，
+      设置 TUSHARE_TOKEN，初始化 pro_api，
+      配置 matplotlib 中文字体与图表风格。
+    outputs: [确认信息打印]
+
+  - cell_index: 3
+    type: code
+    title: 数据获取
+    content: |
+      调用 hk_daily 获取 00981.HK 日线数据。
+      若无权限则降级为 pro_bar 或 A 股 688981.SH。
+      落盘到 CSV 备份。
+    outputs: [数据行数, 时间范围打印]
+
+  - cell_index: 4
+    type: markdown
+    title: 数据概览
+    content: |
+      展示前 5 行与描述性统计 (describe)，
+      说明字段含义与数据质量。
+
+  - cell_index: 5
+    type: code
+    title: 数据清洗与预处理
+    content: |
+      类型转换 (trade_date → datetime)，
+      按日期排序，设置索引，
+      执行质量校验 (行数/去重/空值/价格合理性)。
+    outputs: [校验结果表格]
+
+  - cell_index: 6
+    type: code
+    title: 价格走势可视化
+    content: |
+      绘制收盘价折线图 + 成交量柱状图 (双面板)，
+      标注关键时间节点，作为后续指标的参考基准。
+    outputs: [价格走势图]
+
+  # --- RSI ---
+  - cell_index: 7
+    type: markdown
+    title: RSI 指标说明
+    content: |
+      ### RSI 相对强弱指数
+      原理、公式、参数(14日)、判读规则。
+      图解：0-100 量表、超买(>70)/超卖(<30)/中性区间。
+
+  - cell_index: 8
+    type: code
+    title: RSI 计算过程
+    content: |
+      逐步展示 RSI 计算：
+      1. 价格变化 ΔP
+      2. 涨幅/跌幅分离
+      3. Wilder 平滑平均
+      4. RS 与 RSI
+      打印中间结果前 20 行，让计算过程可见。
+    outputs: [中间结果 DataFrame]
+
+  - cell_index: 9
+    type: code
+    title: RSI 可视化
+    content: |
+      双面板图：
+      上 — 收盘价折线
+      下 — RSI 折线 + 30/70 参考线 + 超买超卖区域填充
+      标注 RSI 进入超买/超卖的具体日期。
+    outputs: [RSI 图表]
+
+  # --- MACD ---
+  - cell_index: 10
+    type: markdown
+    title: MACD 指标说明
+    content: |
+      ### MACD 指数平滑异同移动平均线
+      原理、公式、参数(12/26/9)、金叉死叉规则。
+      EMA 加权特性说明。
+
+  - cell_index: 11
+    type: code
+    title: MACD 计算过程
+    content: |
+      逐步展示 MACD 计算：
+      1. EMA(12) 与 EMA(26)
+      2. DIF = EMA(12) − EMA(26)
+      3. DEA = EMA(9) of DIF
+      4. MACD 柱 = (DIF − DEA) × 2
+      打印中间结果前 20 行。
+    outputs: [中间结果 DataFrame]
+
+  - cell_index: 12
+    type: code
+    title: MACD 可视化
+    content: |
+      双面板图：
+      上 — 收盘价折线
+      下 — DIF/DEA 折线 + MACD 柱状图(红涨绿跌)
+      标注金叉/死叉点(↑/↓ 箭头)。
+    outputs: [MACD 图表]
+
+  # --- 布林带 ---
+  - cell_index: 13
+    type: markdown
+    title: 布林带指标说明
+    content: |
+      ### 布林带 Bollinger Bands
+      原理、公式、参数(20日, 2σ)、挤压扩张规则。
+      带宽与 %B 的含义。
+
+  - cell_index: 14
+    type: code
+    title: 布林带计算过程
+    content: |
+      逐步展示布林带计算：
+      1. 中轨 SMA(20)
+      2. 标准差 σ(20)
+      3. 上轨 = 中轨 + 2σ, 下轨 = 中轨 − 2σ
+      4. 带宽 = (上轨 − 下轨) / 中轨
+      5. %B = (Close − 下轨) / (上轨 − 下轨)
+      打印中间结果前 20 行。
+    outputs: [中间结果 DataFrame]
+
+  - cell_index: 15
+    type: code
+    title: 布林带可视化
+    content: |
+      三面板图：
+      上 — 收盘价 + 上/中/下轨 + 通道填充
+      中 — 带宽折线(标注挤压区间)
+      下 — %B 折线(0/0.5/1 参考线)
+    outputs: [布林带图表]
+
+  # --- ATR ---
+  - cell_index: 16
+    type: markdown
+    title: ATR 指标说明
+    content: |
+      ### ATR 平均真实波幅
+      原理、TR 三种场景、公式、参数(14日)。
+      止损与仓位管理应用。
+
+  - cell_index: 17
+    type: code
+    title: ATR 计算过程
+    content: |
+      逐步展示 ATR 计算：
+      1. TR = max(H−L, |H−PC|, |L−PC|)
+      2. ATR = Wilder 平滑 / SMA(TR, 14)
+      3. 动态止损线 = Close − 2×ATR
+      打印中间结果前 20 行。
+    outputs: [中间结果 DataFrame]
+
+  - cell_index: 18
+    type: code
+    title: ATR 可视化
+    content: |
+      双面板图：
+      上 — 收盘价 + 2×ATR 止损线
+      下 — ATR 折线 + TR 柱状图(浅色)
+      标注 ATR 飙升的日期。
+    outputs: [ATR 图表]
+
+  # --- 综合 ---
+  - cell_index: 19
+    type: markdown
+    title: 综合分析面板
+    content: |
+      ### 四指标综合仪表盘
+      将四个指标的关键信号汇总为一张面板，
+      辅助交叉验证与综合判断。
+
+  - cell_index: 20
+    type: code
+    title: 综合仪表盘
+    content: |
+      四面板组合图 (2×2 网格)：
+      左上 — RSI    | 右上 — MACD
+      左下 — 布林带 | 右下 — ATR
+      共享 X 轴(日期)，对齐时间线。
+    outputs: [综合仪表盘图]
+
+  - cell_index: 21
+    type: code
+    title: 信号汇总表
+    content: |
+      生成最近 30 个交易日的信号汇总 DataFrame：
+      日期 | 收盘价 | RSI | RSI信号 | MACD信号 | 布林带%B | 布林带信号 | ATR | ATR止损价
+    outputs: [信号汇总表]
+
+  - cell_index: 22
+    type: markdown
+    title: 结论与判读
+    content: |
+      ### 总结
+      基于四项指标的综合判读，
+      中芯国际港股当前的技术面状态。
+      各指标的优缺点与适用场景回顾。
+
+# -----------------------------------------------------------------------------
+# 6. 可视化规范
+# -----------------------------------------------------------------------------
+visualization_rules:
+  style: "seaborn-v0_8-whitegrid"
+  figure_size: [14, 8]          # 单图默认尺寸
+  font:
+    family: "Microsoft YaHei"   # 中文字体(Windows)
+    size: 12
+  color_convention: "CN"        # 中国惯例: 红涨绿跌
+  colors:
+    up: "#E24B4A"               # 红色(涨)
+    down: "#639922"             # 绿色(跌)
+    accent_1: "#378ADD"         # 蓝(价格线)
+    accent_2: "#7F77DD"         # 紫(信号线)
+    accent_3: "#BA7517"         # 橙(辅助)
+    fill_alpha: 0.15            # 填充透明度
+  dpi: 150
+  savefig: true                 # 每张图同时保存 PNG
+
+# -----------------------------------------------------------------------------
+# 7. 输出文件
+# -----------------------------------------------------------------------------
+outputs:
+  directory: "./task02_indicator_lab/"
+  files:
+    - name: "spec.yaml"
+      type: config
+      description: 本规范文件
+    - name: "indicator_lab.ipynb"
+      type: notebook
+      description: Jupyter Notebook 主文件，包含完整计算过程与可视化
+    - name: "data/00981HK_daily.csv"
+      type: data
+      description: 原始日线数据备份
+    - name: "data/00981HK_indicators.csv"
+      type: data
+      description: 含全部指标计算结果的 CSV
+    - name: "figures/"
+      type: directory
+      description: 各指标可视化 PNG 图片
+    - name: "README.md"
+      type: doc
+      description: 说明文档，含运行方法与结果摘要
+
+# -----------------------------------------------------------------------------
+# 8. 执行流程
+# -----------------------------------------------------------------------------
+workflow:
+  - step: 1
+    name: 环境校验
+    action: 确认 TUSHARE_TOKEN / tushare / pandas / matplotlib / notebook 可用
+    on_fail: 终止并提示
+
+  - step: 2
+    name: 数据获取
+    action: hk_daily 获取 00981.HK 日线，落盘 CSV
+    fallback: 降级 pro_bar 或 A 股 688981.SH
+
+  - step: 3
+    name: 数据预处理
+    action: 类型转换、排序、质量校验
+
+  - step: 4
+    name: 指标计算
+    action: 依次计算 RSI / MACD / 布林带 / ATR，保留中间结果
+
+  - step: 5
+    name: 可视化
+    action: 按规范绘制各指标图表 + 综合仪表盘
+
+  - step: 6
+    name: 信号汇总
+    action: 生成最近 30 日信号汇总表
+
+  - step: 7
+    name: Notebook 生成
+    action: 使用 nbformat 编程生成 .ipynb，或手写后用 jupyter 执行
+
+  - step: 8
+    name: 验证与导出
+    action: 执行 notebook 确认无报错，导出图表 PNG
+
+# -----------------------------------------------------------------------------
+# 9. 质量校验
+# -----------------------------------------------------------------------------
+quality:
+  - id: notebook_executable
+    rule: notebook 可无错执行至最后一个 cell
+    severity: error
+  - id: data_sufficient
+    rule: 数据行数 >= 200 (确保指标计算有足够窗口)
+    severity: error
+  - id: indicator_columns_present
+    rule: 结果 DataFrame 含 rsi_14, dif, dea, macd_hist, bb_upper, bb_lower, atr_14
+    severity: error
+  - id: visualization_rendered
+    rule: 每个 indicator cell 均有图表输出
+    severity: warn
+  - id: signal_table_complete
+    rule: 信号汇总表覆盖最近 30 个交易日，无空值
+    severity: warn

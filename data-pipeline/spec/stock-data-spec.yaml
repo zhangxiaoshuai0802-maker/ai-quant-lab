@@ -1,0 +1,339 @@
+# =============================================================================
+# Tushare 股票数据取数规范 (Stock Data Fetching Spec)
+# =============================================================================
+# 用途: 规范化地从 Tushare Pro 获取典型 A 股标的多维数据，供研究/投研复用。
+# 说明: 本文件既是"配置"(机器可解析)，也是"契约"(人可阅读)。
+#       新增标的只需在 universe 段追加；新增数据集只需在 datasets 段追加。
+# 版本: 1.1.0
+# 日期: 2026-07-04
+# =============================================================================
+
+spec:
+  name: tushare-stock-data-spec
+  version: 1.1.0
+  created: 2026-07-04
+  description: >
+    典型 A 股标的(中芯国际/比亚迪/长江电力)多维度数据采集规范，
+    覆盖基础信息、行情(K线)、资金流向与公司基本面。
+
+# -----------------------------------------------------------------------------
+# 1. 前置条件 (Prerequisites)
+# -----------------------------------------------------------------------------
+prerequisites:
+  token:
+    env_var: TUSHARE_TOKEN
+    how_to_get: https://tushare.pro/register
+    note: 需在环境变量中配置；部分接口有积分门槛，见各 dataset.permissions。
+  runtime:
+    python: ">=3.10"
+    packages:
+      - tushare>=1.4.0
+      - pandas>=2.0
+  cli:
+    entrypoint: scripts/market.py   # 复用 tushare skill 自带脚本
+    skill_path: ~/.workbuddy/skills/tushare
+
+# -----------------------------------------------------------------------------
+# 2. 股票池 (Universe) —— 本次三只典型标的
+# -----------------------------------------------------------------------------
+universe:
+  - name: 中芯国际
+    full_name: 中芯国际集成电路制造有限公司
+    ts_code: 688981.SH
+    symbol: 688981
+    exchange: SSE            # 上海证券交易所
+    market: 科创板
+    sector: 半导体
+    note: A 股科创板代表，另有 H 股 00981.HK 不在本规范范围
+    enabled: true
+
+  - name: 比亚迪
+    full_name: 比亚迪股份有限公司
+    ts_code: 002594.SZ
+    symbol: 002594
+    exchange: SZSE           # 深圳证券交易所
+    market: 深市主板
+    sector: 新能源汽车
+    note: A+H 股，H 股 01211.HK 不在本规范范围
+    enabled: true
+
+  - name: 长江电力
+    full_name: 中国长江电力股份有限公司
+    ts_code: 600900.SH
+    symbol: 600900
+    exchange: SSE
+    market: 沪市主板
+    sector: 电力/公用事业
+    note: 典型红利/防御型蓝筹
+    enabled: true
+
+# -----------------------------------------------------------------------------
+# 3. 数据集定义 (Datasets) —— 每个接口一个数据集
+#    frequency: snapshot=一次性快照 daily=每日 weekly=每周 monthly=每月
+# -----------------------------------------------------------------------------
+datasets:
+
+  # 3.1 基础信息(低频快照)
+  - id: stock_basic
+    name: 股票基础信息
+    cli: stock_basic
+    frequency: snapshot
+    description: 标的的元信息(代码/名称/行业/上市日期等)，初始化或按月刷新
+    params:
+      list_status: L          # 在市
+    by_universe: true         # 对 universe 中每只标的取数
+    fields: [ts_code, symbol, name, area, industry, fullname, market, exchange, list_date, is_hs]
+    permissions: 基础权限
+    schedule: 每月首个交易日
+
+  # 3.2 日线行情
+  - id: daily
+    name: 日线行情
+    cli: daily
+    frequency: daily
+    description: 日频 OHLCV + 涨跌幅（支持复权）
+    params:
+      ts_code: "{ts_code}"    # 占位符，运行时按 universe 替换
+      start_date: "{start_date}"
+      end_date: "{end_date}"
+      adj: qfq                # 复权类型: 空=不复权, qfq=前复权(默认), hfq=后复权
+    by_universe: true
+    fields: [ts_code, trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount]
+    permissions: 基础权限
+    schedule: 每个交易日 18:00 后
+    retention: 历史全量保留
+    note: >
+      adj=qfq 时脚本内部通过 ts.pro_bar() 获取复权数据（额外调用 adj_factor 接口），
+      adj 为空时使用 pro.daily()。复权模式不支持 trade_date 截面查询。
+
+  # 3.3 周线行情
+  - id: weekly
+    name: 周线行情
+    cli: weekly
+    frequency: weekly
+    description: 周频 K 线（支持复权）
+    params:
+      ts_code: "{ts_code}"
+      start_date: "{start_date}"
+      end_date: "{end_date}"
+      adj: qfq                # 复权类型: 空=不复权, qfq=前复权(默认), hfq=后复权
+    by_universe: true
+    fields: [ts_code, trade_date, open, high, low, close, vol, amount]
+    permissions: 基础权限
+    schedule: 每周六
+    retention: 历史全量保留
+    note: adj 非空时通过 ts.pro_bar(freq='weekly') 获取，限频 1次/分钟不变
+
+  # 3.4 月线行情
+  - id: monthly
+    name: 月线行情
+    cli: monthly
+    frequency: monthly
+    description: 月频 K 线（支持复权）
+    params:
+      ts_code: "{ts_code}"
+      start_date: "{start_date}"
+      end_date: "{end_date}"
+      adj: qfq                # 复权类型: 空=不复权, qfq=前复权(默认), hfq=后复权
+    by_universe: true
+    fields: [ts_code, trade_date, open, high, low, close, vol, amount]
+    permissions: 基础权限
+    schedule: 每月最后一个交易日
+    retention: 历史全量保留
+    note: adj 非空时通过 ts.pro_bar(freq='monthly') 获取，限频 1次/分钟不变
+
+  # 3.5 个股资金流向
+  - id: moneyflow
+    name: 个股资金流向
+    cli: moneyflow
+    frequency: daily
+    description: 大/中/小/特大单买卖及净流入
+    params:
+      ts_code: "{ts_code}"
+      start_date: "{start_date}"
+      end_date: "{end_date}"
+    by_universe: true
+    fields: [ts_code, trade_date, buy_sm_amount, sell_sm_amount, buy_md_amount, sell_md_amount,
+             buy_lg_amount, sell_lg_amount, buy_elg_amount, sell_elg_amount, net_mf_amount]
+    permissions: 需更高积分(当前token实测无权限), 见 interface_constraints
+    schedule: 每个交易日 18:00 后
+    retention: 历史全量保留
+
+  # 3.6 公司基本信息(低频快照)
+  - id: stock_company
+    name: 上市公司基本信息
+    cli: company
+    frequency: snapshot
+    description: 董事长/总经理/注册资本/主营业务等
+    params: {}
+    by_universe: false        # 全市场一次性拉取后按 universe 过滤
+    fields: [ts_code, chairman, manager, secretary, reg_capital, setup_date, province, city,
+             employees, main_business, business_scope, website]
+    permissions: 基础权限
+    schedule: 每季度刷新
+
+# -----------------------------------------------------------------------------
+# 4. 取数参数 (Run Defaults)
+# -----------------------------------------------------------------------------
+run_defaults:
+  default_range:
+    start_date: 20200101      # 默认回溯起点: 2020 年至今
+    end_date: "{today}"       # 运行时替换为当日(YYYYMMDD)
+  adjustment:
+    default_adj: qfq          # 全局默认复权类型: qfq=前复权(推荐), hfq=后复权, 空=不复权
+    override_per_dataset: false  # 若 true 则各 dataset 的 params.adj 覆盖全局默认
+    note: >
+      前复权(qfq)以最新价格为基准，适合技术分析与回测；
+      后复权(hfq)以最早价格为基准，适合长期收益率计算；
+      不复权为原始成交价，适合核对交易所数据。
+  incremental:
+    enabled: true             # 增量取数: 仅取上次成功水位之后的数据
+    watermark_file: ./.workbuddy/state/watermark.json
+  rate_limit:
+    requests_per_minute: 200  # daily/stock_basic 等高频接口
+    weekly_monthly_limit: 1   # weekly/monthly 限 1次/分钟，标的间需间隔 62s
+    backoff_seconds: 62       # 触发限流后退避时长(weekly/monthly)
+    network_retry: 3          # 网络中断(Response ended prematurely)重试次数
+
+# -----------------------------------------------------------------------------
+# 4.1 接口权限与限制 (实测约束, 2026-07-04)
+# -----------------------------------------------------------------------------
+interface_constraints:
+  - api: daily
+    rate: 500次/分钟
+    permission: 基础权限(当前token可用)
+  - api: pro_bar (复权模式)
+    rate: 同 daily/weekly/monthly 底层接口
+    permission: 基础权限 + adj_factor 接口权限
+    note: >
+      复权模式下 ts.pro_bar() 内部额外调用 adj_factor 获取复权因子，
+      API 调用量约为不复权模式的 2 倍。
+    extra_fields: 无（输出字段与 daily/weekly/monthly 一致）
+  - api: adj_factor (复权因子)
+    rate: 当前token实测 1次/小时(低积分); 120+积分可达 400次/分钟
+    permission: 基础权限可用, 但低积分限频极严
+    note: >
+      这是复权取数(pro_bar)的底层瓶颈。pro_bar 每次调用会请求一次 adj_factor，
+      若 token 积分不足(<120), adj_factor 限 1次/小时, 导致复权取数每小时仅能取1只标的。
+      建议: 1) 升级 Tushare 积分至 120+ 解锁 400次/分钟; 或
+      2) 手动调 adj_factor 一次取全量因子, 本地计算复权价(仅需1次API调用)。
+  - api: weekly
+    rate: 1次/分钟            # 严格限频，标的间必须间隔 ≥60s
+    permission: 基础权限
+  - api: monthly
+    rate: 1次/分钟            # 严格限频，标的间必须间隔 ≥60s
+    permission: 基础权限
+  - api: moneyflow
+    rate: "-"
+    permission: 需更高积分(当前token无权限)  # 见 https://tushare.pro/document/1?doc_id=108
+    workaround: 积分不足时可改用 daily 的 amount 字段做资金面近似, 或升级积分
+  - api: stock_company
+    rate: 200次/分钟
+    permission: 基础权限
+    note: 全市场一次性拉取易网络中断(Response ended prematurely), 建议按 ts_code 逐只取
+
+# -----------------------------------------------------------------------------
+# 5. 输出规范 (Output Layout)
+# -----------------------------------------------------------------------------
+output:
+  root: ./outputs/stock_data
+  layout: partition           # 按 数据集/标的/日期 分区
+  partition_by: [dataset, ts_code]
+  format: csv                 # 落地格式 csv；可扩展 parquet
+  encoding: utf-8-sig         # Excel 友好
+  naming: "{dataset}/{ts_code}/{ts_code}_{dataset}_{adj}_{start}_{end}.csv"
+  naming_no_adj: "{dataset}/{ts_code}/{ts_code}_{dataset}_{start}_{end}.csv"
+  adj_in_filename: true       # 复权数据文件名含 adj 标识(qfq/hfq)，不复权则省略
+  examples:
+    - outputs/stock_data/daily/688981.SH/688981.SH_daily_qfq_20200101_20260704.csv
+    - outputs/stock_data/daily/002594.SZ/002594.SZ_daily_qfq_20200101_20260704.csv
+    - outputs/stock_data/daily/600900.SH/600900.SH_daily_qfq_20200101_20260704.csv
+    - outputs/stock_data/weekly/688981.SH/688981.SH_weekly_qfq_20200101_20260704.csv
+    - outputs/stock_data/moneyflow/688981.SH/688981.SH_moneyflow_20200101_20260704.csv
+  snapshot_layout: flat       # 快照类(stock_basic/stock_company)扁平存放
+  snapshot_naming: "{dataset}/{dataset}_snapshot_{date}.csv"
+
+# -----------------------------------------------------------------------------
+# 6. 数据质量校验 (Quality Checks)
+# -----------------------------------------------------------------------------
+quality:
+  - id: row_count
+    rule: 每只标的的 daily 数据行数 > 0
+    severity: error
+  - id: no_duplicate
+    rule: (ts_code, trade_date) 唯一，无重复
+    severity: error
+  - id: date_continuity
+    rule: 日线在交易日历上无缺失(允许停牌)
+    severity: warn
+  - id: price_sanity
+    rule: open/high/low/close > 0 且 high>=low, high>=close>=low
+    severity: error
+    note: 复权后价格可能为小数(如10送10后历史价减半)，仍需满足 >0 与 OHLC 区间约束
+  - id: null_check
+    rule: 核心字段(open/close/vol)无空值
+    severity: error
+  - id: adj_consistency
+    rule: 同一标的同一周期的复权与非复权数据行数一致(日期对齐)
+    severity: warn
+    note: 复权仅调整价格，不改变数据行数与日期范围
+
+# -----------------------------------------------------------------------------
+# 7. 执行流程 (Workflow Steps) —— 规划的工作步骤
+# -----------------------------------------------------------------------------
+workflow:
+  - step: 1
+    name: 环境准备
+    action: 校验 TUSHARE_TOKEN 已配置、tushare/pandas 已安装
+    command: |
+      python -c "import tushare, pandas; import os; assert os.getenv('TUSHARE_TOKEN'), 'set TUSHARE_TOKEN'"
+    exit_on_fail: true
+
+  - step: 2
+    name: 标的校验
+    action: 用 stock_basic 反查 universe 中三只股票，确认代码/名称/上市状态一致
+    command: python scripts/market.py stock_basic --exchange SSE
+    expect: 命中 688981.SH / 600900.SH；SZSE 命中 002594.SZ
+
+  - step: 3
+    name: 历史回填(首次)
+    action: 按 run_defaults.default_range 对每个 dataset 全量取数
+    loop: for each dataset in [daily, weekly, monthly, moneyflow] × universe
+    note: 首次执行回填 2020-01-01 至今；后续走增量
+
+  - step: 4
+    name: 快照取数
+    action: 取 stock_basic 与 stock_company 快照，扁平落盘
+    command: python scripts/market.py company
+
+  - step: 5
+    name: 落盘与分区
+    action: 按 output.naming 规范写入分区目录，utf-8-sig 编码
+
+  - step: 6
+    name: 质量校验
+    action: 逐标的执行 quality 段全部校验，失败则记录并报警
+    output: outputs/stock_data/_quality_report_{date}.json
+
+  - step: 7
+    name: 水位更新
+    action: 成功后更新 watermark.json，供下次增量取数使用
+
+  - step: 8
+    name: 汇总报告
+    action: 生成本次取数汇总(标的×数据集×行数×时间范围)，输出 Markdown
+
+# -----------------------------------------------------------------------------
+# 8. 调度建议 (Schedule)
+# -----------------------------------------------------------------------------
+schedule:
+  one_time_backfill:
+    when: 手动触发(首次)
+    steps: [1,2,3,4,5,6,7,8]
+  daily_incremental:
+    when: 每个交易日 18:30
+    steps: [1,3(daily+moneyflow 增量),5,6,7,8]
+    note: 可配置为 WorkBuddy 自动化(automation)定时执行
+  monthly_refresh:
+    when: 每月首个交易日
+    steps: [4(stock_basic),5,6]
