@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ML选股策略交互系统 | TASK6</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background: #f0f2f5; color: #333; }
+.header { background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%); color: white; padding: 28px 40px; }
+.header h1 { font-size: 24px; margin-bottom: 6px; }
+.header .subtitle { font-size: 14px; opacity: 0.85; }
+.nav-bar { background: #fff; padding: 10px 40px; display: flex; gap: 20px; border-bottom: 1px solid #e0e0e0; }
+.nav-bar a { color: #0072ff; text-decoration: none; font-size: 14px; padding: 6px 16px; border-radius: 6px; transition: all 0.2s; }
+.nav-bar a:hover { background: #f0f0ff; }
+.nav-bar a.active { background: #0072ff; color: white; }
+.container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+.control-panel { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.control-panel h3 { font-size: 16px; margin-bottom: 16px; }
+.controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+.control-group { display: flex; flex-direction: column; gap: 6px; }
+.control-group label { font-size: 13px; color: #666; font-weight: 500; }
+.control-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; cursor: pointer; }
+.preset-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.preset-btn { padding: 6px 14px; border: 1px solid #0072ff; border-radius: 20px; background: white; color: #0072ff; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+.preset-btn:hover, .preset-btn.active { background: #0072ff; color: white; }
+.metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.metric-card { background: white; border-radius: 10px; padding: 14px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+.metric-card .label { font-size: 11px; color: #888; margin-bottom: 4px; }
+.metric-card .value { font-size: 20px; font-weight: 700; }
+.metric-card .sub { font-size: 11px; color: #aaa; margin-top: 2px; }
+.chart-container { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.chart-container h3 { font-size: 15px; margin-bottom: 12px; }
+.chart { width: 100%; }
+.info-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.info-card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+.info-card h4 { font-size: 14px; color: #0072ff; margin-bottom: 8px; }
+.info-card p { font-size: 13px; color: #555; line-height: 1.6; }
+.footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
+.green { color: #4CAF50; } .red { color: #e74c3c; } .blue { color: #2196F3; }
+.stock-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.stock-table th { background: #f5f5f5; padding: 8px; text-align: left; border-bottom: 2px solid #ddd; }
+.stock-table td { padding: 6px 8px; border-bottom: 1px solid #eee; }
+.stock-table tr:hover { background: #f9f9ff; }
+@media (max-width: 768px) { .controls-grid { grid-template-columns: 1fr; } .metrics-row { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="header">
+    <h1>智能决策者：机器学习选股策略交互系统</h1>
+    <div class="subtitle">TASK6 · 线性回归 / 决策树 / 随机森林 / GBDT · Top15/20/30季度选股 · 参数可调实时分析</div>
+</div>
+<div class="nav-bar">
+    <a href="index.html">双均线策略</a>
+    <a href="turtle-strategy.html">海龟策略</a>
+    <a href="ml-classification.html">ML分类(TASK5)</a>
+    <a href="ml-stock-strategy.html" class="active">ML选股(TASK6)</a>
+</div>
+<div class="container">
+    <div class="control-panel">
+        <h3>参数控制面板</h3>
+        <div class="controls-grid">
+            <div class="control-group">
+                <label>模型选择</label>
+                <select id="modelSelect" onchange="updateAll()">
+                    <option value="线性回归">线性回归 (Ridge)</option>
+                    <option value="决策树">决策树</option>
+                    <option value="随机森林" selected>随机森林</option>
+                    <option value="GBDT">GBDT</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>选股数量 (Top-N)</label>
+                <select id="topNSelect" onchange="updateAll()">
+                    <option value="15">Top 15</option>
+                    <option value="20">Top 20</option>
+                    <option value="30" selected>Top 30</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>对比模式</label>
+                <select id="compareMode" onchange="updateAll()">
+                    <option value="single">单模型详情</option>
+                    <option value="all_models" selected>所有模型对比</option>
+                    <option value="all_topn">不同选股数对比</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>选股明细季度</label>
+                <select id="quarterSelect" onchange="updateStockTable()"></select>
+            </div>
+        </div>
+        <div class="preset-buttons">
+            <button class="preset-btn active" onclick="setPreset('随机森林',30,'all_models')">RF Top30 全模型对比</button>
+            <button class="preset-btn" onclick="setPreset('随机森林',15,'all_topn')">RF 不同选股数</button>
+            <button class="preset-btn" onclick="setPreset('线性回归',30,'all_models')">线性回归 Top30</button>
+            <button class="preset-btn" onclick="setPreset('GBDT',20,'single')">GBDT Top20 详情</button>
+        </div>
+    </div>
+    <div class="metrics-row" id="metricsRow"></div>
+    <div class="chart-container"><h3>图1 累计净值对比</h3><div id="chartNav" class="chart"></div></div>
+    <div class="chart-container"><h3>图2 季度收益率对比</h3><div id="chartQuarterly" class="chart"></div></div>
+    <div class="chart-container"><h3>图3 超额收益净值</h3><div id="chartExcess" class="chart"></div></div>
+    <div class="chart-container"><h3>图4 核心指标对比</h3><div id="chartMetrics" class="chart"></div></div>
+    <div class="chart-container"><h3>图5 因子重要性</h3><div id="chartImportance" class="chart"></div></div>
+    <div class="chart-container"><h3>图6 预测值 vs 实际值散点图（随机森林）</h3><div id="chartScatter" class="chart"></div></div>
+    <div class="chart-container">
+        <h3>图7 季度选股明细</h3>
+        <div id="stockTableContainer" style="max-height:400px;overflow-y:auto;"></div>
+    </div>
+    <div class="info-cards">
+        <div class="info-card"><h4>ML交易策略核心理念</h4><p>利用机器学习模型从历史因子数据中学习规律，预测未来收益率并进行截面排序选股。每季度末根据模型预测值选Top-N股票等权配置，下季度初调仓。优点：非线性建模、多因子融合、自适应学习。缺点：过拟合风险高、黑箱难解释、对数据质量敏感。</p></div>
+        <div class="info-card"><h4>因子体系（16个技术因子）</h4><p>动量因子(4个)：5/20/60/120日收益率。趋势因子(4个)：均线比值、价格偏离度。波动因子(3个)：20/60日波动率及其比值。量价因子(2个)：成交量比值及变化。技术指标(3个)：RSI、布林带位置、ATR比值。</p></div>
+        <div class="info-card"><h4>应变量设计</h4><p>未来60个交易日（约一个季度）的累计收益率（百分比）。采用连续值回归框架，而非二分类，保留更多信息量。截面排名标准化消除个股绝对水平差异。</p></div>
+        <div class="info-card"><h4>回测方法</h4><p>扩展窗口训练：每季度用之前所有可用数据训练。测试季度：2024Q1~2024Q3共3个季度。基准：全市场等权平均。指标：累计回报、夏普比率、最大回撤、季度胜率、超额收益。</p></div>
+    </div>
+    <div class="footer">TASK6 机器学习选股策略 · 量化交易工作坊 · 39只A股 · 2023-01-01~2025-06-30 · 数据来源: Tushare</div>
+</div>
+<script>
+const ALL_DATA = {"results": {"线性回归_Top15": {"model": "线性回归", "top_n": 15, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-3.33, -1.36, -1.98], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9667, 0.9536, 0.9347], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9927, 0.9907, 0.9816], "cum_ret": -6.53, "bench_cum": -4.74, "excess_cum": -1.84, "annual_ret": -8.61, "sharpe": -5.415, "bench_sharpe": -4.574, "mdd": -3.31, "bench_mdd": -2.21, "win_rate": 0.0, "excess_sharpe": -4.04, "dir_acc": 56.4, "rank_corr": 0.122}, "线性回归_Top20": {"model": "线性回归", "top_n": 20, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-2.6, 1.77, -0.62], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.974, 0.9912, 0.985], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9999, 1.0292, 1.0337], "cum_ret": -1.5, "bench_cum": -4.74, "excess_cum": 3.37, "annual_ret": -1.99, "sharpe": -0.543, "bench_sharpe": -4.574, "mdd": -0.62, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": 1.732, "dir_acc": 56.4, "rank_corr": 0.122}, "线性回归_Top30": {"model": "线性回归", "top_n": 30, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-2.24, -0.47, -0.55], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9776, 0.973, 0.9677], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [1.0035, 1.0104, 1.0156], "cum_ret": -3.23, "bench_cum": -4.74, "excess_cum": 1.56, "annual_ret": -4.29, "sharpe": -2.652, "bench_sharpe": -4.574, "mdd": -1.01, "bench_mdd": -2.21, "win_rate": 100.0, "excess_sharpe": 7.356, "dir_acc": 56.4, "rank_corr": 0.122}, "决策树_Top15": {"model": "决策树", "top_n": 15, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-5.35, 0.74, -2.76], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9465, 0.9535, 0.9272], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9724, 0.9909, 0.974], "cum_ret": -7.28, "bench_cum": -4.74, "excess_cum": -2.6, "annual_ret": -9.59, "sharpe": -1.971, "bench_sharpe": -4.574, "mdd": -2.76, "bench_mdd": -2.21, "win_rate": 33.3, "excess_sharpe": -0.857, "dir_acc": 53.0, "rank_corr": -0.009}, "决策树_Top20": {"model": "决策树", "top_n": 20, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-5.45, 0.69, -0.34], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9455, 0.952, 0.9487], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9714, 0.9894, 0.9964], "cum_ret": -5.13, "bench_cum": -4.74, "excess_cum": -0.36, "annual_ret": -6.78, "sharpe": -1.268, "bench_sharpe": -4.574, "mdd": -0.34, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": -0.099, "dir_acc": 53.0, "rank_corr": -0.009}, "决策树_Top30": {"model": "决策树", "top_n": 30, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-2.42, -0.39, -0.73], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9758, 0.9719, 0.9648], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [1.0017, 1.0094, 1.0126], "cum_ret": -3.52, "bench_cum": -4.74, "excess_cum": 1.26, "annual_ret": -4.67, "sharpe": -2.67, "bench_sharpe": -4.574, "mdd": -1.13, "bench_mdd": -2.21, "win_rate": 100.0, "excess_sharpe": 3.313, "dir_acc": 53.0, "rank_corr": -0.009}, "随机森林_Top15": {"model": "随机森林", "top_n": 15, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-4.21, 0.74, 0.56], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9579, 0.9651, 0.9704], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9839, 1.0026, 1.0188], "cum_ret": -2.96, "bench_cum": -4.74, "excess_cum": 1.88, "annual_ret": -3.92, "sharpe": -0.846, "bench_sharpe": -4.574, "mdd": 0.0, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": 0.796, "dir_acc": 52.1, "rank_corr": 0.06}, "随机森林_Top20": {"model": "随机森林", "top_n": 20, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-3.99, 1.24, 0.27], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9601, 0.972, 0.9747], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9861, 1.0097, 1.0231], "cum_ret": -2.53, "bench_cum": -4.74, "excess_cum": 2.31, "annual_ret": -3.36, "sharpe": -0.728, "bench_sharpe": -4.574, "mdd": 0.0, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": 0.975, "dir_acc": 52.1, "rank_corr": 0.06}, "随机森林_Top30": {"model": "随机森林", "top_n": 30, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-3.16, -1.14, -0.6], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9684, 0.9573, 0.9516], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9943, 0.9945, 0.9991], "cum_ret": -4.84, "bench_cum": -4.74, "excess_cum": -0.09, "annual_ret": -6.4, "sharpe": -2.965, "bench_sharpe": -4.574, "mdd": -1.73, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": -0.146, "dir_acc": 52.1, "rank_corr": 0.06}, "GBDT_Top15": {"model": "GBDT", "top_n": 15, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-4.52, -0.51, 0.56], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9548, 0.9499, 0.9552], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9807, 0.9871, 1.003], "cum_ret": -4.48, "bench_cum": -4.74, "excess_cum": 0.3, "annual_ret": -5.93, "sharpe": -1.362, "bench_sharpe": -4.574, "mdd": -0.51, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": 0.15, "dir_acc": 53.0, "rank_corr": 0.016}, "GBDT_Top20": {"model": "GBDT", "top_n": 20, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-6.81, -0.78, 0.4], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9319, 0.9246, 0.9283], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9578, 0.9614, 0.9754], "cum_ret": -7.17, "bench_cum": -4.74, "excess_cum": -2.46, "annual_ret": -9.45, "sharpe": -1.52, "bench_sharpe": -4.574, "mdd": -0.78, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": -0.647, "dir_acc": 53.0, "rank_corr": 0.016}, "GBDT_Top30": {"model": "GBDT", "top_n": 30, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "returns": [-2.93, -0.88, -0.6], "bench_returns": [-2.59, -1.16, -1.06], "nav": [0.9707, 0.9622, 0.9564], "bench_nav": [0.9741, 0.9628, 0.9526], "excess_nav": [0.9966, 0.9994, 1.004], "cum_ret": -4.36, "bench_cum": -4.74, "excess_cum": 0.4, "annual_ret": -5.77, "sharpe": -2.828, "bench_sharpe": -4.574, "mdd": -1.47, "bench_mdd": -2.21, "win_rate": 66.7, "excess_sharpe": 0.785, "dir_acc": 53.0, "rank_corr": 0.016}}, "importance": {"随机森林": {"ret_5d": 0.0596, "ret_20d": 0.0333, "ret_60d": 0.0666, "ret_120d": 0.037, "ma_ratio_5_20": 0.0879, "ma_ratio_20_60": 0.0576, "price_ma20_ratio": 0.0438, "price_ma60_ratio": 0.0471, "volatility_20d": 0.0668, "volatility_60d": 0.0953, "vol_ratio": 0.0516, "vol_ratio_5_20": 0.0719, "vol_change": 0.0643, "rsi_14": 0.0568, "boll_pos": 0.0544, "atr_ratio": 0.1061}, "GBDT": {"ret_5d": 0.0645, "ret_20d": 0.0399, "ret_60d": 0.0858, "ret_120d": 0.0444, "ma_ratio_5_20": 0.1095, "ma_ratio_20_60": 0.0401, "price_ma20_ratio": 0.0239, "price_ma60_ratio": 0.0242, "volatility_20d": 0.0475, "volatility_60d": 0.0663, "vol_ratio": 0.0997, "vol_ratio_5_20": 0.0913, "vol_change": 0.048, "rsi_14": 0.0552, "boll_pos": 0.0463, "atr_ratio": 0.1133}}, "quarter_labels": ["2024-09-30", "2024-12-31", "2025-03-31"], "scatter": {"preds": [2.45, -2.17, 2.72, -0.57, 2.0, 0.32, -3.45, -0.7, -2.39, -1.43, -0.38, 2.18, -3.88, -8.19, -6.04, -1.21, -3.17, -5.33, -6.22, -3.06, -3.87, -1.7, -0.1, -3.27, -3.32, -6.91, 1.32, -2.51, 2.14, -1.8, -0.55, -5.13, -0.4, 0.47, -0.29, -4.91, -0.88, -7.56, -6.7, 2.64, -7.54, 0.36, -1.55, -7.08, 2.65, 2.6, -4.22, -2.54, -5.99, -9.14, -0.53, -6.03, -2.63, -0.71, -5.46, -6.44, -5.39, 1.86, -5.22, -8.12, 0.42, -1.19, -9.04, -0.86, -1.44, 1.06, 0.03, -3.66, -5.38, -0.22, 1.26, -1.77, 2.55, -0.06, 3.26, -2.57, -1.54, -3.29, -0.38, -6.14, -7.16, 0.07, -7.12, 2.15, 0.56, -1.16, -6.27, -2.49, -4.63, -6.26, -5.25, -3.59, -4.45, -6.49, -5.16, -6.17, 4.13, -1.59, -0.64, -9.1, -3.43, 0.27, -8.4, -2.53, 0.74, -2.84, -1.64, -0.59, -0.56, 1.96, 1.24, -0.54, -1.31, 2.84, 0.71, 3.47, 3.19], "actuals": [-2.13, -24.28, -5.41, -0.97, -15.26, -4.94, -0.45, -13.11, -12.39, 1.69, 12.74, -3.93, 5.54, -4.16, -7.26, -11.16, 33.79, 5.83, -3.45, 0.61, 12.17, -11.65, 5.34, -18.5, 1.12, -11.78, -20.23, -12.76, -8.22, 0.83, 3.47, 6.07, -6.33, 1.45, -5.59, 12.46, 3.69, -0.22, -3.78, -3.08, -1.65, 4.43, -2.47, 5.89, -0.22, -5.24, -5.74, 8.35, 11.99, -0.23, -2.57, -3.74, -13.1, 26.48, 4.41, -13.05, -8.62, -13.47, -10.79, -9.36, 15.9, 8.52, -5.3, 5.27, 11.2, -7.86, 2.94, 1.6, -1.48, -6.26, -7.76, -10.25, 10.54, -2.22, -0.43, -7.56, -8.95, -11.39, 7.19, -8.94, -3.86, -8.03, -12.58, -1.19, -3.86, -9.48, 1.3, 9.97, 0.65, -9.67, -0.18, -15.16, -11.47, 20.67, 2.44, -0.28, -1.57, 3.87, 4.15, -5.87, 6.14, -1.94, -3.96, 5.49, -19.27, -9.7, -11.61, -8.92, -0.71, 4.83, 7.08, 8.06, 7.46, 10.16, 7.68, 4.01, -4.12]}, "stock_detail": {"线性回归": [{"quarter": "2024-09-30", "train_size": 156, "top_returns": {"15": -3.325420928230528, "20": -2.6034412132594786, "30": -2.2444048891013866}, "benchmark_ret": -2.5933439367022677, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 1.48, "actual": -2.13}, {"code": "000002.SZ", "name": "万科A", "pred": -0.69, "actual": -24.28}, {"code": "000157.SZ", "name": "中联重科", "pred": 8.25, "actual": -5.41}, {"code": "000333.SZ", "name": "美的集团", "pred": -2.43, "actual": -0.97}, {"code": "000568.SZ", "name": "泸州老窖", "pred": 7.84, "actual": -15.26}, {"code": "000651.SZ", "name": "格力电器", "pred": -9.21, "actual": -4.94}, {"code": "000725.SZ", "name": "京东方A", "pred": -4.47, "actual": -0.45}, {"code": "000858.SZ", "name": "五粮液", "pred": 1.57, "actual": -13.11}, {"code": "000876.SZ", "name": "新希望", "pred": -9.83, "actual": -12.39}, {"code": "000963.SZ", "name": "华东医药", "pred": -9.84, "actual": 1.69}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -0.7, "actual": 12.74}, {"code": "002415.SZ", "name": "海康威视", "pred": -1.57, "actual": -3.93}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -7.2, "actual": 5.54}, {"code": "002475.SZ", "name": "立讯精密", "pred": -8.22, "actual": -4.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -13.94, "actual": -7.26}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -1.93, "actual": -11.16}, {"code": "300059.SZ", "name": "东方财富", "pred": -4.24, "actual": 33.79}, {"code": "300750.SZ", "name": "宁德时代", "pred": -6.98, "actual": 5.83}, {"code": "600028.SH", "name": "中国石化", "pred": -1.85, "actual": -3.45}, {"code": "600029.SH", "name": "南方航空", "pred": 0.53, "actual": 0.61}, {"code": "600030.SH", "name": "中信证券", "pred": 0.96, "actual": 12.17}, {"code": "600031.SH", "name": "三一重工", "pred": -2.95, "actual": -11.65}, {"code": "600036.SH", "name": "招商银行", "pred": 9.12, "actual": 5.34}, {"code": "600048.SH", "name": "保利发展", "pred": -2.35, "actual": -18.5}, {"code": "600050.SH", "name": "中国联通", "pred": -3.89, "actual": 1.12}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -17.59, "actual": -11.78}, {"code": "600309.SH", "name": "万华化学", "pred": 0.31, "actual": -20.23}, {"code": "600519.SH", "name": "贵州茅台", "pred": -0.09, "actual": -12.76}, {"code": "600585.SH", "name": "海螺水泥", "pred": 3.23, "actual": -8.22}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -1.81, "actual": 0.83}, {"code": "600887.SH", "name": "伊利股份", "pred": 1.91, "actual": 3.47}, {"code": "600941.SH", "name": "中国移动", "pred": 1.76, "actual": 6.07}, {"code": "601021.SH", "name": "春秋航空", "pred": -10.29, "actual": -6.33}, {"code": "601166.SH", "name": "兴业银行", "pred": 9.79, "actual": 1.45}, {"code": "601318.SH", "name": "中国平安", "pred": 2.48, "actual": -5.59}, {"code": "601398.SH", "name": "工商银行", "pred": -1.26, "actual": 12.46}, {"code": "601688.SH", "name": "华泰证券", "pred": 1.79, "actual": 3.69}, {"code": "601857.SH", "name": "中国石油", "pred": -3.57, "actual": -0.22}, {"code": "603288.SH", "name": "海天味业", "pred": -5.39, "actual": -3.78}]}, {"quarter": "2024-12-31", "train_size": 195, "top_returns": {"15": -1.3602964832675213, "20": 1.766001663746494, "30": -0.4679142884143625}, "benchmark_ret": -1.1609875500700997, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 6.53, "actual": -3.08}, {"code": "000002.SZ", "name": "万科A", "pred": -5.95, "actual": -1.65}, {"code": "000157.SZ", "name": "中联重科", "pred": -4.62, "actual": 4.43}, {"code": "000333.SZ", "name": "美的集团", "pred": -1.49, "actual": -2.47}, {"code": "000568.SZ", "name": "泸州老窖", "pred": -4.8, "actual": 5.89}, {"code": "000651.SZ", "name": "格力电器", "pred": 3.64, "actual": -0.22}, {"code": "000725.SZ", "name": "京东方A", "pred": -2.92, "actual": -5.24}, {"code": "000858.SZ", "name": "五粮液", "pred": -3.61, "actual": -5.74}, {"code": "000876.SZ", "name": "新希望", "pred": -6.91, "actual": 8.35}, {"code": "000963.SZ", "name": "华东医药", "pred": -1.55, "actual": 11.99}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -13.23, "actual": -0.23}, {"code": "002415.SZ", "name": "海康威视", "pred": 1.88, "actual": -2.57}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -8.47, "actual": -3.74}, {"code": "002475.SZ", "name": "立讯精密", "pred": 5.27, "actual": -13.1}, {"code": "002594.SZ", "name": "比亚迪", "pred": -2.02, "actual": 26.48}, {"code": "300003.SZ", "name": "乐普医疗", "pred": 0.3, "actual": 4.41}, {"code": "300059.SZ", "name": "东方财富", "pred": -6.75, "actual": -13.05}, {"code": "300750.SZ", "name": "宁德时代", "pred": -4.48, "actual": -8.62}, {"code": "600028.SH", "name": "中国石化", "pred": 0.99, "actual": -13.47}, {"code": "600029.SH", "name": "南方航空", "pred": -12.13, "actual": -10.79}, {"code": "600030.SH", "name": "中信证券", "pred": -4.58, "actual": -9.36}, {"code": "600031.SH", "name": "三一重工", "pred": 2.95, "actual": 15.9}, {"code": "600036.SH", "name": "招商银行", "pred": -0.89, "actual": 8.52}, {"code": "600048.SH", "name": "保利发展", "pred": -4.61, "actual": -5.3}, {"code": "600050.SH", "name": "中国联通", "pred": -0.85, "actual": 5.27}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -0.99, "actual": 11.2}, {"code": "600309.SH", "name": "万华化学", "pred": -0.24, "actual": -7.86}, {"code": "600519.SH", "name": "贵州茅台", "pred": 0.58, "actual": 2.94}, {"code": "600585.SH", "name": "海螺水泥", "pred": -7.6, "actual": 1.6}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -5.44, "actual": -1.48}, {"code": "600887.SH", "name": "伊利股份", "pred": -2.4, "actual": -6.26}, {"code": "600941.SH", "name": "中国移动", "pred": -3.14, "actual": -7.76}, {"code": "601021.SH", "name": "春秋航空", "pred": -6.6, "actual": -10.25}, {"code": "601166.SH", "name": "兴业银行", "pred": 2.87, "actual": 10.54}, {"code": "601318.SH", "name": "中国平安", "pred": 2.37, "actual": -2.22}, {"code": "601398.SH", "name": "工商银行", "pred": 1.23, "actual": -0.43}, {"code": "601688.SH", "name": "华泰证券", "pred": 2.72, "actual": -7.56}, {"code": "601857.SH", "name": "中国石油", "pred": 3.85, "actual": -8.95}, {"code": "603288.SH", "name": "海天味业", "pred": -4.17, "actual": -11.39}]}, {"quarter": "2025-03-31", "train_size": 234, "top_returns": {"15": -1.9780881874304441, "20": -0.61727545999434, "30": -0.5470211901465233}, "benchmark_ret": -1.056450862305116, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": -1.57, "actual": 7.19}, {"code": "000002.SZ", "name": "万科A", "pred": -4.63, "actual": -8.94}, {"code": "000157.SZ", "name": "中联重科", "pred": -11.69, "actual": -3.86}, {"code": "000333.SZ", "name": "美的集团", "pred": -3.03, "actual": -8.03}, {"code": "000568.SZ", "name": "泸州老窖", "pred": -10.51, "actual": -12.58}, {"code": "000651.SZ", "name": "格力电器", "pred": -2.76, "actual": -1.19}, {"code": "000725.SZ", "name": "京东方A", "pred": -4.51, "actual": -3.86}, {"code": "000858.SZ", "name": "五粮液", "pred": -0.18, "actual": -9.48}, {"code": "000876.SZ", "name": "新希望", "pred": -9.8, "actual": 1.3}, {"code": "000963.SZ", "name": "华东医药", "pred": -2.95, "actual": 9.97}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -3.19, "actual": 0.65}, {"code": "002415.SZ", "name": "海康威视", "pred": -5.76, "actual": -9.67}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -3.1, "actual": -0.18}, {"code": "002475.SZ", "name": "立讯精密", "pred": -8.72, "actual": -15.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -5.91, "actual": -11.47}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -7.75, "actual": 20.67}, {"code": "300059.SZ", "name": "东方财富", "pred": -5.42, "actual": 2.44}, {"code": "300750.SZ", "name": "宁德时代", "pred": -1.88, "actual": -0.28}, {"code": "600028.SH", "name": "中国石化", "pred": 8.1, "actual": -1.57}, {"code": "600029.SH", "name": "南方航空", "pred": 12.16, "actual": 3.87}, {"code": "600030.SH", "name": "中信证券", "pred": -1.31, "actual": 4.15}, {"code": "600031.SH", "name": "三一重工", "pred": -18.54, "actual": -5.87}, {"code": "600036.SH", "name": "招商银行", "pred": -6.75, "actual": 6.14}, {"code": "600048.SH", "name": "保利发展", "pred": 1.63, "actual": -1.94}, {"code": "600050.SH", "name": "中国联通", "pred": -9.13, "actual": -3.96}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -4.59, "actual": 5.49}, {"code": "600309.SH", "name": "万华化学", "pred": -0.35, "actual": -19.27}, {"code": "600519.SH", "name": "贵州茅台", "pred": 0.88, "actual": -9.7}, {"code": "600585.SH", "name": "海螺水泥", "pred": -0.57, "actual": -11.61}, {"code": "600600.SH", "name": "青岛啤酒", "pred": 2.09, "actual": -8.92}, {"code": "600887.SH", "name": "伊利股份", "pred": 1.14, "actual": -0.71}, {"code": "600941.SH", "name": "中国移动", "pred": -0.15, "actual": 4.83}, {"code": "601021.SH", "name": "春秋航空", "pred": 9.15, "actual": 7.08}, {"code": "601166.SH", "name": "兴业银行", "pred": -4.0, "actual": 8.06}, {"code": "601318.SH", "name": "中国平安", "pred": -1.51, "actual": 7.46}, {"code": "601398.SH", "name": "工商银行", "pred": 3.27, "actual": 10.16}, {"code": "601688.SH", "name": "华泰证券", "pred": 12.86, "actual": 7.68}, {"code": "601857.SH", "name": "中国石油", "pred": 6.73, "actual": 4.01}, {"code": "603288.SH", "name": "海天味业", "pred": 3.65, "actual": -4.12}]}], "决策树": [{"quarter": "2024-09-30", "train_size": 156, "top_returns": {"15": -5.350017188447587, "20": -5.453570727992959, "30": -2.4238001293710973}, "benchmark_ret": -2.5933439367022677, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 8.79, "actual": -2.13}, {"code": "000002.SZ", "name": "万科A", "pred": -7.82, "actual": -24.28}, {"code": "000157.SZ", "name": "中联重科", "pred": -1.23, "actual": -5.41}, {"code": "000333.SZ", "name": "美的集团", "pred": 9.53, "actual": -0.97}, {"code": "000568.SZ", "name": "泸州老窖", "pred": 1.06, "actual": -15.26}, {"code": "000651.SZ", "name": "格力电器", "pred": 9.53, "actual": -4.94}, {"code": "000725.SZ", "name": "京东方A", "pred": -14.41, "actual": -0.45}, {"code": "000858.SZ", "name": "五粮液", "pred": 1.06, "actual": -13.11}, {"code": "000876.SZ", "name": "新希望", "pred": -1.65, "actual": -12.39}, {"code": "000963.SZ", "name": "华东医药", "pred": -1.23, "actual": 1.69}, {"code": "002230.SZ", "name": "科大讯飞", "pred": 1.06, "actual": 12.74}, {"code": "002415.SZ", "name": "海康威视", "pred": 1.06, "actual": -3.93}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -7.82, "actual": 5.54}, {"code": "002475.SZ", "name": "立讯精密", "pred": -14.41, "actual": -4.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -14.41, "actual": -7.26}, {"code": "300003.SZ", "name": "乐普医疗", "pred": 1.06, "actual": -11.16}, {"code": "300059.SZ", "name": "东方财富", "pred": -7.82, "actual": 33.79}, {"code": "300750.SZ", "name": "宁德时代", "pred": -7.82, "actual": 5.83}, {"code": "600028.SH", "name": "中国石化", "pred": -2.97, "actual": -3.45}, {"code": "600029.SH", "name": "南方航空", "pred": -1.65, "actual": 0.61}, {"code": "600030.SH", "name": "中信证券", "pred": -7.82, "actual": 12.17}, {"code": "600031.SH", "name": "三一重工", "pred": 9.53, "actual": -11.65}, {"code": "600036.SH", "name": "招商银行", "pred": 8.79, "actual": 5.34}, {"code": "600048.SH", "name": "保利发展", "pred": 1.06, "actual": -18.5}, {"code": "600050.SH", "name": "中国联通", "pred": -14.41, "actual": 1.12}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -14.41, "actual": -11.78}, {"code": "600309.SH", "name": "万华化学", "pred": -1.23, "actual": -20.23}, {"code": "600519.SH", "name": "贵州茅台", "pred": 1.06, "actual": -12.76}, {"code": "600585.SH", "name": "海螺水泥", "pred": 1.06, "actual": -8.22}, {"code": "600600.SH", "name": "青岛啤酒", "pred": 1.06, "actual": 0.83}, {"code": "600887.SH", "name": "伊利股份", "pred": 1.06, "actual": 3.47}, {"code": "600941.SH", "name": "中国移动", "pred": -5.81, "actual": 6.07}, {"code": "601021.SH", "name": "春秋航空", "pred": 1.06, "actual": -6.33}, {"code": "601166.SH", "name": "兴业银行", "pred": -1.23, "actual": 1.45}, {"code": "601318.SH", "name": "中国平安", "pred": -7.82, "actual": -5.59}, {"code": "601398.SH", "name": "工商银行", "pred": -2.97, "actual": 12.46}, {"code": "601688.SH", "name": "华泰证券", "pred": -7.82, "actual": 3.69}, {"code": "601857.SH", "name": "中国石油", "pred": -14.41, "actual": -0.22}, {"code": "603288.SH", "name": "海天味业", "pred": -7.82, "actual": -3.78}]}, {"quarter": "2024-12-31", "train_size": 195, "top_returns": {"15": 0.7366729756729604, "20": 0.6901993737782887, "30": -0.39487106395642685}, "benchmark_ret": -1.1609875500700997, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 7.34, "actual": -3.08}, {"code": "000002.SZ", "name": "万科A", "pred": -17.8, "actual": -1.65}, {"code": "000157.SZ", "name": "中联重科", "pred": -4.47, "actual": 4.43}, {"code": "000333.SZ", "name": "美的集团", "pred": -1.98, "actual": -2.47}, {"code": "000568.SZ", "name": "泸州老窖", "pred": -9.55, "actual": 5.89}, {"code": "000651.SZ", "name": "格力电器", "pred": -1.98, "actual": -0.22}, {"code": "000725.SZ", "name": "京东方A", "pred": 7.34, "actual": -5.24}, {"code": "000858.SZ", "name": "五粮液", "pred": -9.55, "actual": -5.74}, {"code": "000876.SZ", "name": "新希望", "pred": -3.99, "actual": 8.35}, {"code": "000963.SZ", "name": "华东医药", "pred": -1.98, "actual": 11.99}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -2.75, "actual": -0.23}, {"code": "002415.SZ", "name": "海康威视", "pred": -4.47, "actual": -2.57}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -17.8, "actual": -3.74}, {"code": "002475.SZ", "name": "立讯精密", "pred": -4.47, "actual": -13.1}, {"code": "002594.SZ", "name": "比亚迪", "pred": -4.47, "actual": 26.48}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -17.8, "actual": 4.41}, {"code": "300059.SZ", "name": "东方财富", "pred": -4.47, "actual": -13.05}, {"code": "300750.SZ", "name": "宁德时代", "pred": -4.47, "actual": -8.62}, {"code": "600028.SH", "name": "中国石化", "pred": 7.34, "actual": -13.47}, {"code": "600029.SH", "name": "南方航空", "pred": -9.62, "actual": -10.79}, {"code": "600030.SH", "name": "中信证券", "pred": -4.47, "actual": -9.36}, {"code": "600031.SH", "name": "三一重工", "pred": -1.98, "actual": 15.9}, {"code": "600036.SH", "name": "招商银行", "pred": -4.47, "actual": 8.52}, {"code": "600048.SH", "name": "保利发展", "pred": -17.8, "actual": -5.3}, {"code": "600050.SH", "name": "中国联通", "pred": 7.34, "actual": 5.27}, {"code": "600276.SH", "name": "恒瑞医药", "pred": 3.65, "actual": 11.2}, {"code": "600309.SH", "name": "万华化学", "pred": 7.89, "actual": -7.86}, {"code": "600519.SH", "name": "贵州茅台", "pred": -1.98, "actual": 2.94}, {"code": "600585.SH", "name": "海螺水泥", "pred": -3.99, "actual": 1.6}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -4.47, "actual": -1.48}, {"code": "600887.SH", "name": "伊利股份", "pred": -1.98, "actual": -6.26}, {"code": "600941.SH", "name": "中国移动", "pred": -1.98, "actual": -7.76}, {"code": "601021.SH", "name": "春秋航空", "pred": -4.47, "actual": -10.25}, {"code": "601166.SH", "name": "兴业银行", "pred": 7.34, "actual": 10.54}, {"code": "601318.SH", "name": "中国平安", "pred": -4.47, "actual": -2.22}, {"code": "601398.SH", "name": "工商银行", "pred": 7.34, "actual": -0.43}, {"code": "601688.SH", "name": "华泰证券", "pred": -4.47, "actual": -7.56}, {"code": "601857.SH", "name": "中国石油", "pred": -4.47, "actual": -8.95}, {"code": "603288.SH", "name": "海天味业", "pred": -1.98, "actual": -11.39}]}, {"quarter": "2025-03-31", "train_size": 234, "top_returns": {"15": -2.7604810618852307, "20": -0.3443151290338095, "30": -0.7344045681378619}, "benchmark_ret": -1.056450862305116, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 1.56, "actual": 7.19}, {"code": "000002.SZ", "name": "万科A", "pred": -7.3, "actual": -8.94}, {"code": "000157.SZ", "name": "中联重科", "pred": -7.3, "actual": -3.86}, {"code": "000333.SZ", "name": "美的集团", "pred": 0.7, "actual": -8.03}, {"code": "000568.SZ", "name": "泸州老窖", "pred": 12.84, "actual": -12.58}, {"code": "000651.SZ", "name": "格力电器", "pred": 0.7, "actual": -1.19}, {"code": "000725.SZ", "name": "京东方A", "pred": -6.79, "actual": -3.86}, {"code": "000858.SZ", "name": "五粮液", "pred": 1.56, "actual": -9.48}, {"code": "000876.SZ", "name": "新希望", "pred": -7.3, "actual": 1.3}, {"code": "000963.SZ", "name": "华东医药", "pred": 12.84, "actual": 9.97}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -7.3, "actual": 0.65}, {"code": "002415.SZ", "name": "海康威视", "pred": -9.72, "actual": -9.67}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -7.3, "actual": -0.18}, {"code": "002475.SZ", "name": "立讯精密", "pred": -7.3, "actual": -15.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -7.3, "actual": -11.47}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -7.3, "actual": 20.67}, {"code": "300059.SZ", "name": "东方财富", "pred": -7.3, "actual": 2.44}, {"code": "300750.SZ", "name": "宁德时代", "pred": -15.73, "actual": -0.28}, {"code": "600028.SH", "name": "中国石化", "pred": 10.71, "actual": -1.57}, {"code": "600029.SH", "name": "南方航空", "pred": -1.28, "actual": 3.87}, {"code": "600030.SH", "name": "中信证券", "pred": -9.72, "actual": 4.15}, {"code": "600031.SH", "name": "三一重工", "pred": -9.72, "actual": -5.87}, {"code": "600036.SH", "name": "招商银行", "pred": 0.7, "actual": 6.14}, {"code": "600048.SH", "name": "保利发展", "pred": 1.56, "actual": -1.94}, {"code": "600050.SH", "name": "中国联通", "pred": -7.3, "actual": -3.96}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -1.28, "actual": 5.49}, {"code": "600309.SH", "name": "万华化学", "pred": 1.56, "actual": -19.27}, {"code": "600519.SH", "name": "贵州茅台", "pred": 0.7, "actual": -9.7}, {"code": "600585.SH", "name": "海螺水泥", "pred": 0.7, "actual": -11.61}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -6.45, "actual": -8.92}, {"code": "600887.SH", "name": "伊利股份", "pred": -6.45, "actual": -0.71}, {"code": "600941.SH", "name": "中国移动", "pred": 0.7, "actual": 4.83}, {"code": "601021.SH", "name": "春秋航空", "pred": 10.71, "actual": 7.08}, {"code": "601166.SH", "name": "兴业银行", "pred": 0.7, "actual": 8.06}, {"code": "601318.SH", "name": "中国平安", "pred": 0.7, "actual": 7.46}, {"code": "601398.SH", "name": "工商银行", "pred": 0.7, "actual": 10.16}, {"code": "601688.SH", "name": "华泰证券", "pred": 1.56, "actual": 7.68}, {"code": "601857.SH", "name": "中国石油", "pred": 0.7, "actual": 4.01}, {"code": "603288.SH", "name": "海天味业", "pred": 10.71, "actual": -4.12}]}], "随机森林": [{"quarter": "2024-09-30", "train_size": 156, "top_returns": {"15": -4.207211045337581, "20": -3.98567253324567, "30": -3.161623581625274}, "benchmark_ret": -2.5933439367022677, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 2.45, "actual": -2.13}, {"code": "000002.SZ", "name": "万科A", "pred": -2.17, "actual": -24.28}, {"code": "000157.SZ", "name": "中联重科", "pred": 2.72, "actual": -5.41}, {"code": "000333.SZ", "name": "美的集团", "pred": -0.57, "actual": -0.97}, {"code": "000568.SZ", "name": "泸州老窖", "pred": 2.0, "actual": -15.26}, {"code": "000651.SZ", "name": "格力电器", "pred": 0.32, "actual": -4.94}, {"code": "000725.SZ", "name": "京东方A", "pred": -3.45, "actual": -0.45}, {"code": "000858.SZ", "name": "五粮液", "pred": -0.7, "actual": -13.11}, {"code": "000876.SZ", "name": "新希望", "pred": -2.39, "actual": -12.39}, {"code": "000963.SZ", "name": "华东医药", "pred": -1.43, "actual": 1.69}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -0.38, "actual": 12.74}, {"code": "002415.SZ", "name": "海康威视", "pred": 2.18, "actual": -3.93}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -3.88, "actual": 5.54}, {"code": "002475.SZ", "name": "立讯精密", "pred": -8.19, "actual": -4.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -6.04, "actual": -7.26}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -1.21, "actual": -11.16}, {"code": "300059.SZ", "name": "东方财富", "pred": -3.17, "actual": 33.79}, {"code": "300750.SZ", "name": "宁德时代", "pred": -5.33, "actual": 5.83}, {"code": "600028.SH", "name": "中国石化", "pred": -6.22, "actual": -3.45}, {"code": "600029.SH", "name": "南方航空", "pred": -3.06, "actual": 0.61}, {"code": "600030.SH", "name": "中信证券", "pred": -3.87, "actual": 12.17}, {"code": "600031.SH", "name": "三一重工", "pred": -1.7, "actual": -11.65}, {"code": "600036.SH", "name": "招商银行", "pred": -0.1, "actual": 5.34}, {"code": "600048.SH", "name": "保利发展", "pred": -3.27, "actual": -18.5}, {"code": "600050.SH", "name": "中国联通", "pred": -3.32, "actual": 1.12}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -6.91, "actual": -11.78}, {"code": "600309.SH", "name": "万华化学", "pred": 1.32, "actual": -20.23}, {"code": "600519.SH", "name": "贵州茅台", "pred": -2.51, "actual": -12.76}, {"code": "600585.SH", "name": "海螺水泥", "pred": 2.14, "actual": -8.22}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -1.8, "actual": 0.83}, {"code": "600887.SH", "name": "伊利股份", "pred": -0.55, "actual": 3.47}, {"code": "600941.SH", "name": "中国移动", "pred": -5.13, "actual": 6.07}, {"code": "601021.SH", "name": "春秋航空", "pred": -0.4, "actual": -6.33}, {"code": "601166.SH", "name": "兴业银行", "pred": 0.47, "actual": 1.45}, {"code": "601318.SH", "name": "中国平安", "pred": -0.29, "actual": -5.59}, {"code": "601398.SH", "name": "工商银行", "pred": -4.91, "actual": 12.46}, {"code": "601688.SH", "name": "华泰证券", "pred": -0.88, "actual": 3.69}, {"code": "601857.SH", "name": "中国石油", "pred": -7.56, "actual": -0.22}, {"code": "603288.SH", "name": "海天味业", "pred": -6.7, "actual": -3.78}]}, {"quarter": "2024-12-31", "train_size": 195, "top_returns": {"15": 0.7445575230171465, "20": 1.2371285081232348, "30": -1.1412858558244448}, "benchmark_ret": -1.1609875500700997, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 2.64, "actual": -3.08}, {"code": "000002.SZ", "name": "万科A", "pred": -7.54, "actual": -1.65}, {"code": "000157.SZ", "name": "中联重科", "pred": 0.36, "actual": 4.43}, {"code": "000333.SZ", "name": "美的集团", "pred": -1.55, "actual": -2.47}, {"code": "000568.SZ", "name": "泸州老窖", "pred": -7.08, "actual": 5.89}, {"code": "000651.SZ", "name": "格力电器", "pred": 2.65, "actual": -0.22}, {"code": "000725.SZ", "name": "京东方A", "pred": 2.6, "actual": -5.24}, {"code": "000858.SZ", "name": "五粮液", "pred": -4.22, "actual": -5.74}, {"code": "000876.SZ", "name": "新希望", "pred": -2.54, "actual": 8.35}, {"code": "000963.SZ", "name": "华东医药", "pred": -5.99, "actual": 11.99}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -9.14, "actual": -0.23}, {"code": "002415.SZ", "name": "海康威视", "pred": -0.53, "actual": -2.57}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -6.03, "actual": -3.74}, {"code": "002475.SZ", "name": "立讯精密", "pred": -2.63, "actual": -13.1}, {"code": "002594.SZ", "name": "比亚迪", "pred": -0.71, "actual": 26.48}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -5.46, "actual": 4.41}, {"code": "300059.SZ", "name": "东方财富", "pred": -6.44, "actual": -13.05}, {"code": "300750.SZ", "name": "宁德时代", "pred": -5.39, "actual": -8.62}, {"code": "600028.SH", "name": "中国石化", "pred": 1.86, "actual": -13.47}, {"code": "600029.SH", "name": "南方航空", "pred": -5.22, "actual": -10.79}, {"code": "600030.SH", "name": "中信证券", "pred": -8.12, "actual": -9.36}, {"code": "600031.SH", "name": "三一重工", "pred": 0.42, "actual": 15.9}, {"code": "600036.SH", "name": "招商银行", "pred": -1.19, "actual": 8.52}, {"code": "600048.SH", "name": "保利发展", "pred": -9.04, "actual": -5.3}, {"code": "600050.SH", "name": "中国联通", "pred": -0.86, "actual": 5.27}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -1.44, "actual": 11.2}, {"code": "600309.SH", "name": "万华化学", "pred": 1.06, "actual": -7.86}, {"code": "600519.SH", "name": "贵州茅台", "pred": 0.03, "actual": 2.94}, {"code": "600585.SH", "name": "海螺水泥", "pred": -3.66, "actual": 1.6}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -5.38, "actual": -1.48}, {"code": "600887.SH", "name": "伊利股份", "pred": -0.22, "actual": -6.26}, {"code": "600941.SH", "name": "中国移动", "pred": 1.26, "actual": -7.76}, {"code": "601021.SH", "name": "春秋航空", "pred": -1.77, "actual": -10.25}, {"code": "601166.SH", "name": "兴业银行", "pred": 2.55, "actual": 10.54}, {"code": "601318.SH", "name": "中国平安", "pred": -0.06, "actual": -2.22}, {"code": "601398.SH", "name": "工商银行", "pred": 3.26, "actual": -0.43}, {"code": "601688.SH", "name": "华泰证券", "pred": -2.57, "actual": -7.56}, {"code": "601857.SH", "name": "中国石油", "pred": -1.54, "actual": -8.95}, {"code": "603288.SH", "name": "海天味业", "pred": -3.29, "actual": -11.39}]}, {"quarter": "2025-03-31", "train_size": 234, "top_returns": {"15": 0.5563299924430246, "20": 0.2713775627796554, "30": -0.6000209697208285}, "benchmark_ret": -1.056450862305116, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": -0.38, "actual": 7.19}, {"code": "000002.SZ", "name": "万科A", "pred": -6.14, "actual": -8.94}, {"code": "000157.SZ", "name": "中联重科", "pred": -7.16, "actual": -3.86}, {"code": "000333.SZ", "name": "美的集团", "pred": 0.07, "actual": -8.03}, {"code": "000568.SZ", "name": "泸州老窖", "pred": -7.12, "actual": -12.58}, {"code": "000651.SZ", "name": "格力电器", "pred": 2.15, "actual": -1.19}, {"code": "000725.SZ", "name": "京东方A", "pred": 0.56, "actual": -3.86}, {"code": "000858.SZ", "name": "五粮液", "pred": -1.16, "actual": -9.48}, {"code": "000876.SZ", "name": "新希望", "pred": -6.27, "actual": 1.3}, {"code": "000963.SZ", "name": "华东医药", "pred": -2.49, "actual": 9.97}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -4.63, "actual": 0.65}, {"code": "002415.SZ", "name": "海康威视", "pred": -6.26, "actual": -9.67}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -5.25, "actual": -0.18}, {"code": "002475.SZ", "name": "立讯精密", "pred": -3.59, "actual": -15.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -4.45, "actual": -11.47}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -6.49, "actual": 20.67}, {"code": "300059.SZ", "name": "东方财富", "pred": -5.16, "actual": 2.44}, {"code": "300750.SZ", "name": "宁德时代", "pred": -6.17, "actual": -0.28}, {"code": "600028.SH", "name": "中国石化", "pred": 4.13, "actual": -1.57}, {"code": "600029.SH", "name": "南方航空", "pred": -1.59, "actual": 3.87}, {"code": "600030.SH", "name": "中信证券", "pred": -0.64, "actual": 4.15}, {"code": "600031.SH", "name": "三一重工", "pred": -9.1, "actual": -5.87}, {"code": "600036.SH", "name": "招商银行", "pred": -3.43, "actual": 6.14}, {"code": "600048.SH", "name": "保利发展", "pred": 0.27, "actual": -1.94}, {"code": "600050.SH", "name": "中国联通", "pred": -8.4, "actual": -3.96}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -2.53, "actual": 5.49}, {"code": "600309.SH", "name": "万华化学", "pred": 0.74, "actual": -19.27}, {"code": "600519.SH", "name": "贵州茅台", "pred": -2.84, "actual": -9.7}, {"code": "600585.SH", "name": "海螺水泥", "pred": -1.64, "actual": -11.61}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -0.59, "actual": -8.92}, {"code": "600887.SH", "name": "伊利股份", "pred": -0.56, "actual": -0.71}, {"code": "600941.SH", "name": "中国移动", "pred": 1.96, "actual": 4.83}, {"code": "601021.SH", "name": "春秋航空", "pred": 1.24, "actual": 7.08}, {"code": "601166.SH", "name": "兴业银行", "pred": -0.54, "actual": 8.06}, {"code": "601318.SH", "name": "中国平安", "pred": -1.31, "actual": 7.46}, {"code": "601398.SH", "name": "工商银行", "pred": 2.84, "actual": 10.16}, {"code": "601688.SH", "name": "华泰证券", "pred": 0.71, "actual": 7.68}, {"code": "601857.SH", "name": "中国石油", "pred": 3.47, "actual": 4.01}, {"code": "603288.SH", "name": "海天味业", "pred": 3.19, "actual": -4.12}]}], "GBDT": [{"quarter": "2024-09-30", "train_size": 156, "top_returns": {"15": -4.524255735088612, "20": -6.813382281763363, "30": -2.931007023725388}, "benchmark_ret": -2.5933439367022677, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 4.51, "actual": -2.13}, {"code": "000002.SZ", "name": "万科A", "pred": 0.96, "actual": -24.28}, {"code": "000157.SZ", "name": "中联重科", "pred": 10.48, "actual": -5.41}, {"code": "000333.SZ", "name": "美的集团", "pred": 0.23, "actual": -0.97}, {"code": "000568.SZ", "name": "泸州老窖", "pred": 3.68, "actual": -15.26}, {"code": "000651.SZ", "name": "格力电器", "pred": 5.8, "actual": -4.94}, {"code": "000725.SZ", "name": "京东方A", "pred": -2.67, "actual": -0.45}, {"code": "000858.SZ", "name": "五粮液", "pred": -0.88, "actual": -13.11}, {"code": "000876.SZ", "name": "新希望", "pred": -2.53, "actual": -12.39}, {"code": "000963.SZ", "name": "华东医药", "pred": -2.94, "actual": 1.69}, {"code": "002230.SZ", "name": "科大讯飞", "pred": 2.75, "actual": 12.74}, {"code": "002415.SZ", "name": "海康威视", "pred": 2.37, "actual": -3.93}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -7.57, "actual": 5.54}, {"code": "002475.SZ", "name": "立讯精密", "pred": -13.7, "actual": -4.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -12.06, "actual": -7.26}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -4.7, "actual": -11.16}, {"code": "300059.SZ", "name": "东方财富", "pred": -3.37, "actual": 33.79}, {"code": "300750.SZ", "name": "宁德时代", "pred": -9.45, "actual": 5.83}, {"code": "600028.SH", "name": "中国石化", "pred": -6.52, "actual": -3.45}, {"code": "600029.SH", "name": "南方航空", "pred": -4.95, "actual": 0.61}, {"code": "600030.SH", "name": "中信证券", "pred": -4.21, "actual": 12.17}, {"code": "600031.SH", "name": "三一重工", "pred": -1.01, "actual": -11.65}, {"code": "600036.SH", "name": "招商银行", "pred": 0.91, "actual": 5.34}, {"code": "600048.SH", "name": "保利发展", "pred": -0.94, "actual": -18.5}, {"code": "600050.SH", "name": "中国联通", "pred": -5.11, "actual": 1.12}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -11.32, "actual": -11.78}, {"code": "600309.SH", "name": "万华化学", "pred": 7.83, "actual": -20.23}, {"code": "600519.SH", "name": "贵州茅台", "pred": -2.2, "actual": -12.76}, {"code": "600585.SH", "name": "海螺水泥", "pred": 4.97, "actual": -8.22}, {"code": "600600.SH", "name": "青岛啤酒", "pred": 1.73, "actual": 0.83}, {"code": "600887.SH", "name": "伊利股份", "pred": 1.79, "actual": 3.47}, {"code": "600941.SH", "name": "中国移动", "pred": -5.54, "actual": 6.07}, {"code": "601021.SH", "name": "春秋航空", "pred": -0.66, "actual": -6.33}, {"code": "601166.SH", "name": "兴业银行", "pred": 4.07, "actual": 1.45}, {"code": "601318.SH", "name": "中国平安", "pred": -2.72, "actual": -5.59}, {"code": "601398.SH", "name": "工商银行", "pred": -5.26, "actual": 12.46}, {"code": "601688.SH", "name": "华泰证券", "pred": -2.79, "actual": 3.69}, {"code": "601857.SH", "name": "中国石油", "pred": -5.62, "actual": -0.22}, {"code": "603288.SH", "name": "海天味业", "pred": -12.92, "actual": -3.78}]}, {"quarter": "2024-12-31", "train_size": 195, "top_returns": {"15": -0.5104938821896983, "20": -0.7821026852651102, "30": -0.8782343248208008}, "benchmark_ret": -1.1609875500700997, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 5.14, "actual": -3.08}, {"code": "000002.SZ", "name": "万科A", "pred": -7.46, "actual": -1.65}, {"code": "000157.SZ", "name": "中联重科", "pred": -2.38, "actual": 4.43}, {"code": "000333.SZ", "name": "美的集团", "pred": -1.54, "actual": -2.47}, {"code": "000568.SZ", "name": "泸州老窖", "pred": -6.4, "actual": 5.89}, {"code": "000651.SZ", "name": "格力电器", "pred": 5.35, "actual": -0.22}, {"code": "000725.SZ", "name": "京东方A", "pred": 4.0, "actual": -5.24}, {"code": "000858.SZ", "name": "五粮液", "pred": -10.26, "actual": -5.74}, {"code": "000876.SZ", "name": "新希望", "pred": -4.19, "actual": 8.35}, {"code": "000963.SZ", "name": "华东医药", "pred": -8.84, "actual": 11.99}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -13.4, "actual": -0.23}, {"code": "002415.SZ", "name": "海康威视", "pred": 0.95, "actual": -2.57}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -4.08, "actual": -3.74}, {"code": "002475.SZ", "name": "立讯精密", "pred": 3.43, "actual": -13.1}, {"code": "002594.SZ", "name": "比亚迪", "pred": 2.75, "actual": 26.48}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -5.38, "actual": 4.41}, {"code": "300059.SZ", "name": "东方财富", "pred": -7.94, "actual": -13.05}, {"code": "300750.SZ", "name": "宁德时代", "pred": -4.86, "actual": -8.62}, {"code": "600028.SH", "name": "中国石化", "pred": 0.98, "actual": -13.47}, {"code": "600029.SH", "name": "南方航空", "pred": -5.49, "actual": -10.79}, {"code": "600030.SH", "name": "中信证券", "pred": -11.35, "actual": -9.36}, {"code": "600031.SH", "name": "三一重工", "pred": -0.11, "actual": 15.9}, {"code": "600036.SH", "name": "招商银行", "pred": -2.89, "actual": 8.52}, {"code": "600048.SH", "name": "保利发展", "pred": -10.34, "actual": -5.3}, {"code": "600050.SH", "name": "中国联通", "pred": -1.27, "actual": 5.27}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -2.46, "actual": 11.2}, {"code": "600309.SH", "name": "万华化学", "pred": 3.44, "actual": -7.86}, {"code": "600519.SH", "name": "贵州茅台", "pred": -0.25, "actual": 2.94}, {"code": "600585.SH", "name": "海螺水泥", "pred": -4.41, "actual": 1.6}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -14.72, "actual": -1.48}, {"code": "600887.SH", "name": "伊利股份", "pred": -1.64, "actual": -6.26}, {"code": "600941.SH", "name": "中国移动", "pred": 1.92, "actual": -7.76}, {"code": "601021.SH", "name": "春秋航空", "pred": -4.79, "actual": -10.25}, {"code": "601166.SH", "name": "兴业银行", "pred": 1.63, "actual": 10.54}, {"code": "601318.SH", "name": "中国平安", "pred": -0.69, "actual": -2.22}, {"code": "601398.SH", "name": "工商银行", "pred": 5.36, "actual": -0.43}, {"code": "601688.SH", "name": "华泰证券", "pred": 0.83, "actual": -7.56}, {"code": "601857.SH", "name": "中国石油", "pred": -0.75, "actual": -8.95}, {"code": "603288.SH", "name": "海天味业", "pred": -4.0, "actual": -11.39}]}, {"quarter": "2025-03-31", "train_size": 234, "top_returns": {"15": 0.5621088301962558, "20": 0.3971699199469024, "30": -0.6000209697208285}, "benchmark_ret": -1.056450862305116, "stock_detail": [{"code": "000001.SZ", "name": "平安银行", "pred": 0.29, "actual": 7.19}, {"code": "000002.SZ", "name": "万科A", "pred": -7.33, "actual": -8.94}, {"code": "000157.SZ", "name": "中联重科", "pred": -8.09, "actual": -3.86}, {"code": "000333.SZ", "name": "美的集团", "pred": -0.21, "actual": -8.03}, {"code": "000568.SZ", "name": "泸州老窖", "pred": -7.79, "actual": -12.58}, {"code": "000651.SZ", "name": "格力电器", "pred": 1.9, "actual": -1.19}, {"code": "000725.SZ", "name": "京东方A", "pred": 1.3, "actual": -3.86}, {"code": "000858.SZ", "name": "五粮液", "pred": 3.09, "actual": -9.48}, {"code": "000876.SZ", "name": "新希望", "pred": -8.5, "actual": 1.3}, {"code": "000963.SZ", "name": "华东医药", "pred": -0.56, "actual": 9.97}, {"code": "002230.SZ", "name": "科大讯飞", "pred": -7.31, "actual": 0.65}, {"code": "002415.SZ", "name": "海康威视", "pred": -8.49, "actual": -9.67}, {"code": "002460.SZ", "name": "赣锋锂业", "pred": -4.38, "actual": -0.18}, {"code": "002475.SZ", "name": "立讯精密", "pred": -5.32, "actual": -15.16}, {"code": "002594.SZ", "name": "比亚迪", "pred": -4.2, "actual": -11.47}, {"code": "300003.SZ", "name": "乐普医疗", "pred": -8.89, "actual": 20.67}, {"code": "300059.SZ", "name": "东方财富", "pred": -4.37, "actual": 2.44}, {"code": "300750.SZ", "name": "宁德时代", "pred": -9.94, "actual": -0.28}, {"code": "600028.SH", "name": "中国石化", "pred": 7.54, "actual": -1.57}, {"code": "600029.SH", "name": "南方航空", "pred": 0.7, "actual": 3.87}, {"code": "600030.SH", "name": "中信证券", "pred": 0.31, "actual": 4.15}, {"code": "600031.SH", "name": "三一重工", "pred": -10.32, "actual": -5.87}, {"code": "600036.SH", "name": "招商银行", "pred": -7.29, "actual": 6.14}, {"code": "600048.SH", "name": "保利发展", "pred": 1.99, "actual": -1.94}, {"code": "600050.SH", "name": "中国联通", "pred": -11.34, "actual": -3.96}, {"code": "600276.SH", "name": "恒瑞医药", "pred": -4.4, "actual": 5.49}, {"code": "600309.SH", "name": "万华化学", "pred": 2.52, "actual": -19.27}, {"code": "600519.SH", "name": "贵州茅台", "pred": -6.14, "actual": -9.7}, {"code": "600585.SH", "name": "海螺水泥", "pred": -3.49, "actual": -11.61}, {"code": "600600.SH", "name": "青岛啤酒", "pred": -0.99, "actual": -8.92}, {"code": "600887.SH", "name": "伊利股份", "pred": -0.73, "actual": -0.71}, {"code": "600941.SH", "name": "中国移动", "pred": 1.96, "actual": 4.83}, {"code": "601021.SH", "name": "春秋航空", "pred": 2.91, "actual": 7.08}, {"code": "601166.SH", "name": "兴业银行", "pred": 1.37, "actual": 8.06}, {"code": "601318.SH", "name": "中国平安", "pred": -2.7, "actual": 7.46}, {"code": "601398.SH", "name": "工商银行", "pred": 4.59, "actual": 10.16}, {"code": "601688.SH", "name": "华泰证券", "pred": 4.18, "actual": 7.68}, {"code": "601857.SH", "name": "中国石油", "pred": 5.98, "actual": 4.01}, {"code": "603288.SH", "name": "海天味业", "pred": 6.71, "actual": -4.12}]}]}, "feature_names": ["ret_5d", "ret_20d", "ret_60d", "ret_120d", "ma_ratio_5_20", "ma_ratio_20_60", "price_ma20_ratio", "price_ma60_ratio", "volatility_20d", "volatility_60d", "vol_ratio", "vol_ratio_5_20", "vol_change", "rsi_14", "boll_pos", "atr_ratio"], "models": ["线性回归", "决策树", "随机森林", "GBDT"], "top_n_list": [15, 20, 30], "n_stocks": 39, "n_quarters": 7, "test_quarters": ["2024-09-30", "2024-12-31", "2025-03-31"]};
+const COLORS = {'线性回归':'#2196F3','决策树':'#FF9800','随机森林':'#4CAF50','GBDT':'#9C27B0','基准':'#9E9E9E'};
+
+function setPreset(model, topN, mode) {
+    document.getElementById('modelSelect').value = model;
+    document.getElementById('topNSelect').value = topN;
+    document.getElementById('compareMode').value = mode;
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    updateAll();
+}
+
+function updateAll() {
+    const model = document.getElementById('modelSelect').value;
+    const topN = parseInt(document.getElementById('topNSelect').value);
+    const mode = document.getElementById('compareMode').value;
+    updateQuarterSelect(model);
+    updateMetrics(model, topN, mode);
+    drawNav(model, topN, mode);
+    drawQuarterly(model, topN, mode);
+    drawExcess(model, topN, mode);
+    drawMetricsComparison(model, topN, mode);
+    drawImportance();
+    drawScatter();
+    updateStockTable();
+}
+
+function updateQuarterSelect(model) {
+    const sel = document.getElementById('quarterSelect');
+    const detail = ALL_DATA.stock_detail[model] || [];
+    sel.innerHTML = '';
+    detail.forEach((q, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = q.quarter;
+        sel.appendChild(opt);
+    });
+}
+
+function updateMetrics(model, topN, mode) {
+    const key = `${model}_Top${topN}`;
+    const r = ALL_DATA.results[key];
+    if (!r) return;
+    const row = document.getElementById('metricsRow');
+    const cards = [
+        {label:'累计回报', value: r.cum_ret + '%', color: r.cum_ret >= 0 ? '#4CAF50' : '#e74c3c', sub: '基准 ' + r.bench_cum + '%'},
+        {label:'超额累计', value: r.excess_cum + '%', color: r.excess_cum >= 0 ? '#4CAF50' : '#e74c3c', sub: '相对基准'},
+        {label:'夏普比率', value: r.sharpe.toFixed(3), color: '#2196F3', sub: '基准 ' + r.bench_sharpe.toFixed(3)},
+        {label:'最大回撤', value: r.mdd + '%', color: '#e74c3c', sub: '基准 ' + r.bench_mdd + '%'},
+        {label:'年化收益', value: r.annual_ret + '%', color: '#FF9800', sub: '季度年化'},
+        {label:'季度胜率', value: r.win_rate + '%', color: r.win_rate >= 50 ? '#4CAF50' : '#e74c3c', sub: 'vs 基准'},
+        {label:'方向准确率', value: r.dir_acc + '%', color: '#9C27B0', sub: '预测方向'},
+        {label:'排序相关性', value: r.rank_corr.toFixed(3), color: '#00BCD4', sub: 'Spearman'},
+    ];
+    row.innerHTML = cards.map(c => `<div class="metric-card" style="border-top:3px solid ${c.color}"><div class="label">${c.label}</div><div class="value" style="color:${c.color}">${c.value}</div><div class="sub">${c.sub}</div></div>`).join('');
+}
+
+function drawNav(model, topN, mode) {
+    const traces = [];
+    const quarters = ALL_DATA.results[`${model}_Top${topN}`].quarter_labels;
+    const x = quarters;
+
+    if (mode === 'single' || mode === 'all_models') {
+        const models = mode === 'all_models' ? ALL_DATA.models : [model];
+        models.forEach(m => {
+            const key = `${m}_Top${topN}`;
+            const r = ALL_DATA.results[key];
+            if (!r) return;
+            traces.push({x: x, y: r.nav.map(v => v * 100), mode: 'lines+markers',
+                name: `${m}策略`, line: {color: COLORS[m], width: 2.5}, marker: {size: 6}});
+        });
+        // 基准
+        const r0 = ALL_DATA.results[`${model}_Top${topN}`];
+        traces.push({x: x, y: r0.bench_nav.map(v => v * 100), mode: 'lines+markers',
+            name: '市场基准(等权)', line: {color: COLORS['基准'], width: 2, dash: 'dash'}, marker: {size: 6}});
+    } else if (mode === 'all_topn') {
+        ALL_DATA.top_n_list.forEach(tn => {
+            const key = `${model}_Top${tn}`;
+            const r = ALL_DATA.results[key];
+            if (!r) return;
+            traces.push({x: x, y: r.nav.map(v => v * 100), mode: 'lines+markers',
+                name: `Top${tn} (累计${r.cum_ret}%)`, line: {width: 2.5}, marker: {size: 6}});
+        });
+        const r0 = ALL_DATA.results[`${model}_Top${topN}`];
+        traces.push({x: x, y: r0.bench_nav.map(v => v * 100), mode: 'lines+markers',
+            name: '基准', line: {color: COLORS['基准'], width: 2, dash: 'dash'}, marker: {size: 6}});
+    }
+
+    Plotly.newPlot('chartNav', traces, {
+        title: {text: '累计净值对比（初始=100）', font: {size: 14}},
+        xaxis: {title: '季度', gridcolor: '#eee'},
+        yaxis: {title: '净值 (%)', gridcolor: '#eee'},
+        height: 420, margin: {t: 50, b: 50, l: 60, r: 20},
+        legend: {orientation: 'h', y: 1.15},
+        plot_bgcolor: '#fafafa',
+    }, {responsive: true});
+}
+
+function drawQuarterly(model, topN, mode) {
+    const traces = [];
+    const quarters = ALL_DATA.results[`${model}_Top${topN}`].quarter_labels;
+    if (mode === 'single' || mode === 'all_models') {
+        const models = mode === 'all_models' ? ALL_DATA.models : [model];
+        models.forEach((m, i) => {
+            const key = `${m}_Top${topN}`;
+            const r = ALL_DATA.results[key];
+            if (!r) return;
+            traces.push({type: 'bar', x: quarters, y: r.returns, name: m,
+                marker: {color: COLORS[m]}, offset: i * 0.15});
+        });
+        const r0 = ALL_DATA.results[`${model}_Top${topN}`];
+        traces.push({type: 'bar', x: quarters, y: r0.bench_returns, name: '基准',
+            marker: {color: COLORS['基准']}, offset: models.length * 0.15});
+    } else {
+        ALL_DATA.top_n_list.forEach((tn, i) => {
+            const key = `${model}_Top${tn}`;
+            const r = ALL_DATA.results[key];
+            if (!r) return;
+            traces.push({type: 'bar', x: quarters, y: r.returns, name: `Top${tn}`,
+                offset: i * 0.2});
+        });
+    }
+    Plotly.newPlot('chartQuarterly', traces, {
+        title: {text: '各季度收益率对比', font: {size: 14}},
+        xaxis: {title: '季度', gridcolor: '#eee'},
+        yaxis: {title: '收益率 (%)', gridcolor: '#eee'},
+        barmode: 'group', height: 380, margin: {t: 50, b: 50, l: 50, r: 20},
+        legend: {orientation: 'h', y: 1.15}, plot_bgcolor: '#fafafa',
+    }, {responsive: true});
+}
+
+function drawExcess(model, topN, mode) {
+    const traces = [];
+    const quarters = ALL_DATA.results[`${model}_Top${topN}`].quarter_labels;
+    const models = mode === 'all_topn' ? [model] : (mode === 'single' ? [model] : ALL_DATA.models);
+    const topNs = mode === 'all_topn' ? ALL_DATA.top_n_list : [topN];
+
+    models.forEach(m => {
+        topNs.forEach(tn => {
+            const key = `${m}_Top${tn}`;
+            const r = ALL_DATA.results[key];
+            if (!r) return;
+            traces.push({x: quarters, y: r.excess_nav.map(v => (v - 1) * 100),
+                mode: 'lines+markers', name: `${m} Top${tn}`,
+                line: {color: COLORS[m], width: 2}, marker: {size: 5}});
+        });
+    });
+    Plotly.newPlot('chartExcess', traces, {
+        title: {text: '超额收益净值（相对市场基准）', font: {size: 14}},
+        xaxis: {title: '季度', gridcolor: '#eee'},
+        yaxis: {title: '超额收益 (%)', gridcolor: '#eee'},
+        height: 380, margin: {t: 50, b: 50, l: 60, r: 20},
+        legend: {orientation: 'h', y: 1.15}, plot_bgcolor: '#fafafa',
+        shapes: [{type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: {color: '#333', width: 1}}],
+    }, {responsive: true});
+}
+
+function drawMetricsComparison(model, topN, mode) {
+    const models = mode === 'all_topn' ? [model] : ALL_DATA.models;
+    const topNs = mode === 'all_topn' ? ALL_DATA.top_n_list : [topN];
+    const labels = mode === 'all_topn' ? models.map(m => `Top${topN}`) : models;
+    const metrics = ['cum_ret', 'sharpe', 'mdd', 'win_rate'];
+    const titles = ['累计回报 (%)', '夏普比率', '最大回撤 (%)', '季度胜率 (%)'];
+
+    const traces = [];
+    for (let i = 0; i < 4; i++) {
+        const vals = [];
+        const names = [];
+        models.forEach(m => {
+            topNs.forEach(tn => {
+                const key = `${m}_Top${tn}`;
+                const r = ALL_DATA.results[key];
+                if (r) { vals.push(r[metrics[i]]); names.push(`${m} Top${tn}`); }
+            });
+        });
+        traces.push({
+            x: names, y: vals, type: 'bar',
+            marker: {color: models.map(m => COLORS[m]).flatMap(c => Array(topNs.length).fill(c))},
+            text: vals.map(v => v.toFixed(2)), textposition: 'outside', textfont: {size: 9},
+            xaxis: 'x' + (i > 0 ? (i + 1) : ''), yaxis: 'y' + (i > 0 ? (i + 1) : ''),
+        });
+    }
+
+    Plotly.newPlot('chartMetrics', traces, {
+        title: {text: '核心指标对比', font: {size: 14}},
+        grid: {rows: 2, columns: 2, pattern: 'independent'},
+        height: 550, margin: {t: 50, b: 60, l: 50, r: 20},
+        showlegend: false, plot_bgcolor: '#fafafa',
+        annotations: titles.map((t, i) => ({
+            text: t, xref: 'paper', yref: 'paper',
+            x: [0.25, 0.75, 0.25, 0.75][i], y: [1.05, 1.05, 0.5, 0.5][i],
+            showarrow: false, font: {size: 12, weight: 'bold'}
+        })),
+    }, {responsive: true});
+}
+
+function drawImportance() {
+    const allTraces = [];
+    let hasData = false;
+    Object.entries(ALL_DATA.importance).forEach(([model, imp]) => {
+        hasData = true;
+        const entries = Object.entries(imp).sort((a, b) => b[1] - a[1]);
+        allTraces.push({
+            type: 'bar', orientation: 'h',
+            x: entries.map(e => e[1]),
+            y: entries.map(e => e[0]),
+            name: model, marker: {color: COLORS[model]},
+        });
+    });
+    if (!hasData) {
+        document.getElementById('chartImportance').innerHTML = '<p style="text-align:center;color:#999;padding:40px;">线性回归和决策树不提供特征重要性</p>';
+        return;
+    }
+    Plotly.newPlot('chartImportance', allTraces, {
+        title: {text: '因子重要性对比（随机森林 vs GBDT）', font: {size: 14}},
+        barmode: 'group', height: 500,
+        margin: {t: 50, b: 40, l: 140, r: 20},
+        xaxis: {title: '重要性', gridcolor: '#eee'},
+        plot_bgcolor: '#fafafa',
+    }, {responsive: true});
+}
+
+function drawScatter() {
+    const preds = ALL_DATA.scatter.preds;
+    const actuals = ALL_DATA.scatter.actuals;
+    if (!preds || preds.length === 0) return;
+
+    const colors = preds.map(p => p > 0 ? '#4CAF50' : '#e74c3c');
+    Plotly.newPlot('chartScatter', [{
+        x: actuals, y: preds, mode: 'markers', type: 'scatter',
+        marker: {size: 6, color: colors, opacity: 0.5, line: {width: 0.3, color: '#999'}},
+        text: preds.map((p, i) => `预测: ${p.toFixed(1)}%<br>实际: ${actuals[i].toFixed(1)}%`),
+        hoverinfo: 'text',
+    }, {
+        x: [-50, 50], y: [-50, 50], mode: 'lines',
+        line: {color: '#e74c3c', dash: 'dash', width: 1.5}, name: '完美预测线',
+    }], {
+        title: {text: '随机森林预测值 vs 实际下季度收益率', font: {size: 14}},
+        xaxis: {title: '实际收益率 (%)', range: [-50, 50], gridcolor: '#eee'},
+        yaxis: {title: '预测收益率 (%)', range: [-50, 50], gridcolor: '#eee'},
+        height: 450, margin: {t: 50, b: 50, l: 60, r: 20},
+        showlegend: false, plot_bgcolor: '#fafafa',
+    }, {responsive: true});
+}
+
+function updateStockTable() {
+    const model = document.getElementById('modelSelect').value;
+    const qIdx = parseInt(document.getElementById('quarterSelect').value);
+    const detail = ALL_DATA.stock_detail[model];
+    if (!detail || !detail[qIdx]) return;
+
+    const q = detail[qIdx];
+    const sorted = [...q.stock_detail].sort((a, b) => b.pred - a.pred);
+    const top30 = sorted.slice(0, 30);
+
+    let html = `<table class="stock-table"><thead><tr>
+        <th>排名</th><th>股票代码</th><th>名称</th><th>预测收益率</th><th>实际收益率</th><th>命中</th>
+    </tr></thead><tbody>`;
+    top30.forEach((s, i) => {
+        const hit = (s.pred > 0 && s.actual > 0) || (s.pred < 0 && s.actual < 0);
+        html += `<tr>
+            <td>${i + 1}</td><td>${s.code}</td><td>${s.name}</td>
+            <td style="color:${s.pred >= 0 ? '#4CAF50' : '#e74c3c'}">${s.pred > 0 ? '+' : ''}${s.pred}%</td>
+            <td style="color:${s.actual >= 0 ? '#4CAF50' : '#e74c3c'}">${s.actual > 0 ? '+' : ''}${s.actual}%</td>
+            <td>${hit ? '✓' : '✗'}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('stockTableContainer').innerHTML = html;
+}
+
+updateAll();
+</script>
+</body>
+</html>
